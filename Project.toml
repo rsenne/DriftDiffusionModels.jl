@@ -1,1 +1,14 @@
+name = "DriftDiffusionModels"
+uuid = "fd42b4bb-98ff-4b36-9e51-f407bd71120d"
+authors = "[Ryan Senne <rsenne@bu.edu>]"
+version = "0.0.1"
+
 [deps]
+DensityInterface = "b429d917-457f-4dbc-8f4c-0cc954292b1d"
+Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
+ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+Optim = "429524aa-4258-5aef-a3af-852621145aeb"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+StatsAPI = "82ae8749-77ed-4fe6-ae5f-f523153014b0"
+UnPack = "3a884ed6-31ef-47d7-9d2a-63182c4928ed"

@@ -3,20 +3,20 @@
 
 Implement a simple drift diffusion model: da/dt = v + σdW.
 """
-@with_kw mutable struct DriftDiffusionModel
-    B::Float64=10, #Bound Height
-    v::Float64=1.0, # Drift Rate
-    a₀::Float64=0.0, # Initial Accumulation
-    σ::Float64=1.0 # Noise--set to 1.0 be default for identifiability
+mutable struct DriftDiffusionModel
+    B::Float64 #Bound Height
+    v::Float64 # Drift Rate
+    a₀::Float64 # Initial Accumulation
+    σ::Float64 # Noise--set to 1.0 be default for identifiability
 end
 
-function DriftDiffusionModel(
+function DriftDiffusionModel(;
     B::Float64=10.0, #Bound Height
     v::Float64=1.0, # Drift Rate
     a₀::Float64=0.0, # Initial Accumulation
     σ::Float64=1.0 # Noise--set to 1.0 be default for identifiability
 ) 
-    return DriftDiffusionModel(B=B, v=v, a₀=a₀, σ=σ)
+    return DriftDiffusionModel(B, v, a₀, σ)
 end
 
 """
@@ -29,8 +29,8 @@ struct DDMResult
     choice::Int # Choice (-1 or 1)
 end
 
-function DDMResult(rt::Float64, choice::Int)
-    return DDMResult(rt=rt, choice=choice)
+function DDMResult(;rt::Float64, choice::Int)
+    return DDMResult(rt, choice)
 end
 
 """
@@ -66,7 +66,15 @@ function Random.rand(model::DriftDiffusionModel)
     return DDMResult(rt, choice)
 end
 
-function Distributions.logdensityof(model::DriftDiffusionModel, x::DDMResult)
+# Tell Density Interface that DDMResult is a distribution
+DensityInterface.DistributionKind(::DriftDiffusionModel) = HasDensity()
+
+"""
+    DensityInterface.logdensityof(model::DriftDiffusionModel, x::DDMResult)
+
+Calculate the loglikelihood of a drift diffusion model given a DDMResult.
+"""
+function DensityInterface.logdensityof(model::DriftDiffusionModel, x::DDMResult)
     @unpack B, v, a₀, σ = model
     @unpack rt, choice = x
     
@@ -134,7 +142,7 @@ function StatsAPI.fit!(model::DriftDiffusionModel, x::Vector{DDMResult}, w::Vect
     upper_bounds = [Inf, Inf, B - 0.001]      # No upper limit on B or v, prevent a₀ from being at or beyond boundary
     
     # Optimize using L-BFGS-B to respect the bounds
-    result = optimize(neg_log_likelihood, lower_bounds, upper_bounds, initial_params, Fminbox(LBFGS()))
+    result = optimize(neg_log_likelihood, lower_bounds, upper_bounds, initial_params, Fminbox(LBFGS()), autodiff=:forward)
     
     # Extract the optimized parameters
     optimal_params = Optim.minimizer(result)
