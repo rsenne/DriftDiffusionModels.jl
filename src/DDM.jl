@@ -40,24 +40,54 @@ Generates RT and choices from a drift diffusion model.
 
 """
 function Random.rand(model::DriftDiffusionModel)
-
     @unpack B, v, a₀, σ = model
-
-    # Calculate of crossing the upper bound 
-
+    
+    # Calculate probability of hitting upper boundary
+    p_upper = (exp(2 * v * a₀ / σ^2) - 1) / (exp(2 * v * B / σ^2) - 1)
+    
+    # Determine choice based on probability
+    choice = rand() < p_upper ? 1 : -1
+    
+    # Generate first passage time using InverseGaussian distribution
+    if choice == 1
+        # First-passage time to upper boundary
+        μ = (B - a₀) / v
+        λ = (B - a₀)^2 / σ^2
+    else
+        # First-passage time to lower boundary
+        μ = (B + a₀) / (-v)
+        λ = (B + a₀)^2 / σ^2
+    end
+    
+    # Sample from the inverse Gaussian distribution
+    ig = InverseGaussian(μ, λ)
+    rt = rand(ig)
+    
+    return DDMResult(rt, choice)
 end
 
-"""
-    Distributions.logdensityof(model::DriftDiffusionModel, x::DDMResult)
-
-Calculate the loglikelihood of a DDM result i.e., the tuple of RT and choice.
-"""
 function Distributions.logdensityof(model::DriftDiffusionModel, x::DDMResult)
-
     @unpack B, v, a₀, σ = model
     @unpack rt, choice = x
-
-    # Calculate the loglikelihood of the DDM result
+    
+    # Early return for invalid data
+    if rt <= 0
+        return -Inf
+    end
+    
+    # Adjust sign of drift based on choice
+    v_adj = choice * v
+    
+    # Calculate distance to the crossed boundary
+    boundary = choice * B
+    distance = boundary - a₀
+    
+    # Compute log density using first passage time distribution
+    # for Wiener process with drift
+    exponent = -(distance - v_adj * rt)^2 / (2 * σ^2 * rt)
+    log_normalizer = -0.5 * log(2 * π * σ^2 * rt^3)
+    
+    return log_normalizer + exponent
 end
 
 """
@@ -66,10 +96,55 @@ end
 Perform parameter estimation of a drift diffusion model using MLE given a vector of DDM observtions. Takes an optional weights vector to support for use in an HMM.
 """
 function StatsAPI.fit!(model::DriftDiffusionModel, x::Vector{DDMResult}, w::Vector{Float64}=ones(length(x)))
+    @unpack B, v, a₀, σ = model
     
-        @unpack B, v, a₀, σ = model
-
+    # Define negative log-likelihood function for optimization
+    function neg_log_likelihood(params)
+        # Now we optimize boundary, drift rate, and starting point
+        B_temp, v_temp, a₀_temp = params
         
+        # Early return for invalid boundary (must be positive)
+        if B_temp <= 0
+            return Inf
+        end
+        
+        # Early return if starting point is outside boundaries
+        if abs(a₀_temp) >= B_temp
+            return Inf
+        end
+        
+        # Create temporary model with current parameter estimates
+        temp_model = DriftDiffusionModel(B=B_temp, v=v_temp, a₀=a₀_temp, σ=σ)
+        
+        # Calculate weighted log-likelihood across all observations
+        ll = 0.0
+        for i in 1:length(x)
+            ll += w[i] * logdensityof(temp_model, x[i])
+        end
+        
+        # Return negative since optimizers typically minimize
+        return -ll
     end
+    
+    # Set up optimization
+    initial_params = [B, v, a₀]  # Start with current values
+    
+    # Add lower bounds to prevent negative boundary values
+    lower_bounds = [0.001, -Inf, -B + 0.001]  # Prevent B = 0, no constraint on v, prevent a₀ from being at or beyond boundary
+    upper_bounds = [Inf, Inf, B - 0.001]      # No upper limit on B or v, prevent a₀ from being at or beyond boundary
+    
+    # Optimize using L-BFGS-B to respect the bounds
+    result = optimize(neg_log_likelihood, lower_bounds, upper_bounds, initial_params, Fminbox(LBFGS()))
+    
+    # Extract the optimized parameters
+    optimal_params = Optim.minimizer(result)
+    
+    # Update the model with new parameter estimates
+    model.B = optimal_params[1]
+    model.v = optimal_params[2]
+    model.a₀ = optimal_params[3]
+    
+    return model
+end
 
     
