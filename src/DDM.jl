@@ -90,6 +90,28 @@ function Random.rand(model::DriftDiffusionModel, n::Int)
     return results
 end
 
+function Random.rand(rng::AbstractRNG, model::DriftDiffusionModel)
+    @unpack B, v, a₀, σ = model
+
+    p_upper = abs(v) < 1e-10 ? (B + a₀) / (2 * B) : 1 / (1 + exp(-2 * v * a₀ / σ^2))
+    p_upper = clamp(p_upper, 0.0, 1.0)
+
+    u = rand(rng)
+    choice = u < p_upper ? 1 : -1
+
+    if choice == 1
+        μ = (B - a₀) / abs(v)
+        λ = (B - a₀)^2 / σ^2
+    else
+        μ = (B + a₀) / abs(v)
+        λ = (B + a₀)^2 / σ^2
+    end
+
+    rt = rand(rng, InverseGaussian(μ, λ))
+    return DDMResult(rt, choice)
+end
+
+
 # Tell Density Interface that DDMResult is a distribution
 DensityInterface.DensityKind(::DriftDiffusionModel) = HasDensity()
 
@@ -127,7 +149,7 @@ end
 
 Perform parameter estimation of a drift diffusion model using MLE given a vector of DDM observtions. Takes an optional weights vector to support for use in an HMM.
 """
-function StatsAPI.fit!(model::DriftDiffusionModel, x::Vector{DDMResult}, w::Vector{Float64}=ones(length(x)))
+function StatsAPI.fit!(model::DriftDiffusionModel, x::Vector{DDMResult}, w::AbstractVector{<:Real}=ones(length(x)))
     @unpack B, v, a₀, σ = model
     
     # Calculate the initial a₀ as a fraction of B
