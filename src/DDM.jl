@@ -1,3 +1,5 @@
+export DriftDiffusionModel, DDMResult, rand, logdensityof, fit!
+
 """
     DriftDiffusionModel
 
@@ -37,25 +39,35 @@ end
     Random.rand(model::DriftDiffusionModel)
 
 Generates RT and choices from a drift diffusion model. 
-
 """
 function Random.rand(model::DriftDiffusionModel)
     @unpack B, v, a₀, σ = model
     
-    # Calculate probability of hitting upper boundary
-    p_upper = (exp(2 * v * a₀ / σ^2) - 1) / (exp(2 * v * B / σ^2) - 1)
+    # For symmetric boundaries at +B and -B, the probability of hitting 
+    # the upper boundary can be calculated as:
+    if abs(v) < 1e-10
+        # With zero drift, probability depends only on starting position
+        p_upper = (B + a₀) / (2 * B)
+    else
+        # Standard formula for probability of hitting upper boundary with symmetric bounds
+        p_upper = 1 / (1 + exp(-2 * v * a₀ / σ^2))
+    end
+    
+    # Ensure p_upper is a valid probability
+    p_upper = clamp(p_upper, 0.0, 1.0)
     
     # Determine choice based on probability
-    choice = rand() < p_upper ? 1 : -1
+    u = rand()
+    choice = u < p_upper ? 1 : -1
     
-    # Generate first passage time using InverseGaussian distribution
+    # Calculate parameters for the first passage time distribution
     if choice == 1
-        # First-passage time to upper boundary
-        μ = (B - a₀) / v
+        # For upper boundary
+        μ = (B - a₀) / abs(v)
         λ = (B - a₀)^2 / σ^2
     else
-        # First-passage time to lower boundary
-        μ = (B + a₀) / (-v)
+        # For lower boundary
+        μ = (B + a₀) / abs(v)
         λ = (B + a₀)^2 / σ^2
     end
     
@@ -66,8 +78,22 @@ function Random.rand(model::DriftDiffusionModel)
     return DDMResult(rt, choice)
 end
 
+"""
+    Random.rand(model::DriftDiffusionModel, n::Int)
+
+Generates n trials (RT and choices) from a drift diffusion model.
+Returns a vector of DDMResult objects.
+"""
+function Random.rand(model::DriftDiffusionModel, n::Int)
+    results = Vector{DDMResult}(undef, n)
+    for i in 1:n
+        results[i] = rand(model)
+    end
+    return results
+end
+
 # Tell Density Interface that DDMResult is a distribution
-DensityInterface.DistributionKind(::DriftDiffusionModel) = HasDensity()
+DensityInterface.DensityKind(::DriftDiffusionModel) = HasDensity()
 
 """
     DensityInterface.logdensityof(model::DriftDiffusionModel, x::DDMResult)
