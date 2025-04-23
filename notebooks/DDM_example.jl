@@ -34,6 +34,9 @@ begin
 end
 	
 
+# ╔═╡ 732377de-54f5-46f6-91b4-8cb06fcdd85b
+methods(StatsAPI.fit!)
+
 # ╔═╡ b9e64f50-7659-45ce-b933-22c9d8655187
 md"""Fit the DDM"""
 
@@ -51,5 +54,6 @@ end
 # ╠═23318261-4fbd-4518-8bde-100cdde3a171
 # ╟─4c136540-5865-4dc1-81db-c009776a252f
 # ╠═43fa3923-1946-4781-a86c-1aabd3ee3bb7
+# ╠═732377de-54f5-46f6-91b4-8cb06fcdd85b
 # ╟─b9e64f50-7659-45ce-b933-22c9d8655187
 # ╠═b6f6d452-d9e4-483e-a732-b2186558206b

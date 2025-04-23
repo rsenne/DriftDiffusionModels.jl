@@ -1,5 +1,3 @@
-export DriftDiffusionModel, DDMResult, rand, logdensityof, fit!
-
 """
     DriftDiffusionModel
 
@@ -104,22 +102,30 @@ function DensityInterface.logdensityof(model::DriftDiffusionModel, x::DDMResult)
     @unpack B, v, a₀, σ = model
     @unpack rt, choice = x
     
+    return logdensityof(B, v, a₀, σ, rt, choice)
+end
+
+function logdensityof(B::TB, v::TV, a₀::TA, σ::TS, rt::Float64, choice::Int) where {TB<:Real, TV<:Real, TA<:Real, TS<:Real}
     # Early return for invalid data
     if rt <= 0
         return -Inf
     end
     
+    # Promote types to a common type to avoid type issues in calculations
+    T = promote_type(TB, TV, TA, TS)
+    B_p, v_p, a₀_p, σ_p = T(B), T(v), T(a₀), T(σ)
+    
     # Adjust sign of drift based on choice
-    v_adj = choice * v
+    v_adj = choice * v_p
     
     # Calculate distance to the crossed boundary
-    boundary = choice * B
-    distance = boundary - a₀
+    boundary = choice * B_p
+    distance = boundary - a₀_p
     
     # Compute log density using first passage time distribution
     # for Wiener process with drift
-    exponent = -(distance - v_adj * rt)^2 / (2 * σ^2 * rt)
-    log_normalizer = -0.5 * log(2 * π * σ^2 * rt^3)
+    exponent = -(distance - v_adj * rt)^2 / (2 * σ_p^2 * rt)
+    log_normalizer = -0.5 * log(2 * π * σ_p^2 * rt^3)
     
     return log_normalizer + exponent
 end
@@ -132,40 +138,38 @@ Perform parameter estimation of a drift diffusion model using MLE given a vector
 function StatsAPI.fit!(model::DriftDiffusionModel, x::Vector{DDMResult}, w::Vector{Float64}=ones(length(x)))
     @unpack B, v, a₀, σ = model
     
+    # Calculate the initial a₀ as a fraction of B
+    a₀_frac = a₀ / B
+    
     # Define negative log-likelihood function for optimization
     function neg_log_likelihood(params)
-        # Now we optimize boundary, drift rate, and starting point
-        B_temp, v_temp, a₀_temp = params
+        # We optimize B, drift rate, and a₀ as a fraction of B
+        B_temp, v_temp, a₀_frac = params
+        
+        # Calculate actual a₀ based on fraction (always stays within bounds)
+        a₀_temp = a₀_frac * B_temp
         
         # Early return for invalid boundary (must be positive)
         if B_temp <= 0
-            return Inf
+            return convert(typeof(B_temp), Inf)
         end
         
-        # Early return if starting point is outside boundaries
-        if abs(a₀_temp) >= B_temp
-            return Inf
-        end
-        
-        # Create temporary model with current parameter estimates
-        temp_model = DriftDiffusionModel(B=B_temp, v=v_temp, a₀=a₀_temp, σ=σ)
-        
-        # Calculate weighted log-likelihood across all observations
+        # Calculate log-likelihood using the raw parameters version
         ll = 0.0
         for i in 1:length(x)
-            ll += w[i] * logdensityof(temp_model, x[i])
+            ll += w[i] * logdensityof(B_temp, v_temp, a₀_temp, σ, x[i].rt, x[i].choice)
         end
         
         # Return negative since optimizers typically minimize
         return -ll
     end
     
-    # Set up optimization
-    initial_params = [B, v, a₀]  # Start with current values
+    # Set up optimization with reparameterized a₀
+    initial_params = [B, v, a₀_frac]
     
-    # Add lower bounds to prevent negative boundary values
-    lower_bounds = [0.001, -Inf, -B + 0.001]  # Prevent B = 0, no constraint on v, prevent a₀ from being at or beyond boundary
-    upper_bounds = [Inf, Inf, B - 0.001]      # No upper limit on B or v, prevent a₀ from being at or beyond boundary
+    # Add bounds - a₀_frac must be between -1 and 1
+    lower_bounds = [0.001, -Inf, -0.999]
+    upper_bounds = [Inf, Inf, 0.999]
     
     # Optimize using L-BFGS-B to respect the bounds
     result = optimize(neg_log_likelihood, lower_bounds, upper_bounds, initial_params, Fminbox(LBFGS()), autodiff=:forward)
@@ -176,7 +180,7 @@ function StatsAPI.fit!(model::DriftDiffusionModel, x::Vector{DDMResult}, w::Vect
     # Update the model with new parameter estimates
     model.B = optimal_params[1]
     model.v = optimal_params[2]
-    model.a₀ = optimal_params[3]
+    model.a₀ = optimal_params[3] * optimal_params[1]  # Convert fraction back to absolute value
     
     return model
 end
