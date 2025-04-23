@@ -106,29 +106,21 @@ function DensityInterface.logdensityof(model::DriftDiffusionModel, x::DDMResult)
 end
 
 function logdensityof(B::TB, v::TV, a₀::TA, σ::TS, rt::Float64, choice::Int) where {TB<:Real, TV<:Real, TA<:Real, TS<:Real}
-    # Early return for invalid data
     if rt <= 0
         return -Inf
     end
-    
-    # Promote types to a common type to avoid type issues in calculations
+
     T = promote_type(TB, TV, TA, TS)
-    B_p, v_p, a₀_p, σ_p = T(B), T(v), T(a₀), T(σ)
-    
-    # Adjust sign of drift based on choice
-    v_adj = choice * v_p
-    
-    # Calculate distance to the crossed boundary
-    boundary = choice * B_p
-    distance = boundary - a₀_p
-    
-    # Compute log density using first passage time distribution
-    # for Wiener process with drift
-    exponent = -(distance - v_adj * rt)^2 / (2 * σ_p^2 * rt)
-    log_normalizer = -0.5 * log(2 * π * σ_p^2 * rt^3)
-    
-    return log_normalizer + exponent
+    B, v, a₀, σ = T(B), T(v), T(a₀), T(σ)
+
+    distance = choice == 1 ? B - a₀ : B + a₀
+    μ = distance / abs(v)
+    λ = distance^2 / σ^2
+
+    ig = InverseGaussian(μ, λ)
+    return logpdf(ig, rt)
 end
+
 
 """
     StatsAPI.fit!(model::DriftDiffusionModel, x::Vector{DDMResult}, w::Vector{Float64}=ones(length(x)))
