@@ -8,11 +8,13 @@ using Optim
 using ForwardDiff
 using UnPack
 using DensityInterface
+using HiddenMarkovModels
 
 # Import the fit! function specifically--its being weird about fit!
 import StatsAPI: fit!
 
 include("DDM.jl")
+include("Utilities.jl")
 
 export DriftDiffusionModel, DDMResult, rand, logdensityof, fit!
 
