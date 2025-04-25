@@ -136,6 +136,12 @@ function logdensityof(B::TB, v::TV, a₀::TA, σ::TS, rt::Float64, choice::Int) 
     B, v, a₀, σ = T(B), T(v), T(a₀), T(σ)
 
     distance = choice == 1 ? B - a₀ : B + a₀
+
+    # Check if distance is non-positive
+    if distance <= 0
+        return -Inf
+    end
+
     μ = distance / abs(v)
     λ = distance^2 / σ^2
 

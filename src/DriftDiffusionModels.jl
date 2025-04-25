@@ -16,6 +16,6 @@ import StatsAPI: fit!
 include("DDM.jl")
 include("Utilities.jl")
 
-export DriftDiffusionModel, DDMResult, rand, logdensityof, fit!
+export DriftDiffusionModel, DDMResult, rand, logdensityof, fit!, crossvalidate
 
 end

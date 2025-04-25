@@ -1,5 +1,3 @@
-export crossvalidate
-
 """
     randomDDM()
     
@@ -9,7 +7,11 @@ function randomDDM()
     # Generate random parameters for the DDM
     B = rand(Uniform(0.1, 20.0)) # Bound Height
     v = rand(Uniform(1e-3, 9.0))
-    a₀ = rand(Normal(0.0, 1.0))
+    
+    # Generate a₀ as a fraction of B to ensure proper bounds
+    a₀_frac = rand(Uniform(-0.9, 0.9))  # Keep a₀ within ±90% of boundary
+    a₀ = a₀_frac * B
+    
     σ = 1.0 # fixed for identifiability
     return DriftDiffusionModel(B, v, a₀, σ)
 end
@@ -39,7 +41,7 @@ function crossvalidate(x::Vector{Vector{DDMResult}}, n_folds::Int=5, n_states::I
     
     # Test different numbers of states
     for n in 1:n_states
-        cvresults[n] = Vector{Float64}(undef, n_folds)
+        cvresults[n] = Vector{Float64}()
         
         # For each fold
         for i in 1:n_folds
@@ -73,7 +75,7 @@ function crossvalidate(x::Vector{Vector{DDMResult}}, n_folds::Int=5, n_states::I
             γ, ml = forward(hmm_est, concatenated_test; seq_ends=test_seq_ends)
 
             # Save the log likelihood results
-            cvresults[n][i] = ml
+            push!(cvresults[n], mean(ml))
 
             println("Fold $i for $n states done.")
         end
