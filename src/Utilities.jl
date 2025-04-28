@@ -67,13 +67,21 @@ function crossvalidate(x::Vector{Vector{DDMResult}};
 
                 concat_test  = reduce(vcat, test_set)
                 test_ends    = cumsum(length.(test_set))
-
-                ###### fit & score ######
-                hmm_hat, _ = baum_welch(hmm_guess, concat_train; seq_ends=train_ends)
-                _, ml      = forward(hmm_hat, concat_test; seq_ends=test_ends)
-                ll[n][iter, fold] = sum(ml)
-
-                if n == 1                      # store nobs once per (iter,fold)
+                ##### train and test ######
+                try
+                    hmm_hat, _ = baum_welch(hmm_guess, concat_train; seq_ends=train_ends)
+                
+                    # 2. score test set
+                    _, ml      = forward(hmm_hat, concat_test; seq_ends=test_ends)
+                    ll[n][iter,fold] = sum(ml)
+                
+                catch err
+                    @warn "Baum–Welch failed for n=$n, iter=$iter, fold=$fold ⇒ $(err)"
+                    ll[n][iter,fold] = -Inf           # mark the run as unusable
+                end
+                
+                # store nobs once
+                if n == 1
                     nobs[iter,fold] = length(concat_test)
                 end
             end
