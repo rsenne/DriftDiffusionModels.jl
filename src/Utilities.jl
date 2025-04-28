@@ -17,68 +17,68 @@ function randomDDM()
 end
 
 """
-    crossvalidate(ddm::AbstractHMM, x::Vector{Vector{DDMResult}}, folds::Int=5, n_states::Int=5)
+    crossvalidate(x;
+                 n_folds::Int = 5,
+                 n_states::Int = 5,
+                 n_iter::Int  = 5,
+                 rng           = Random.GLOBAL_RNG)
 
-Perform k-fold cross validation on an HMM-DDM.
+k-fold cross-validation for an HMM-DDM with multiple random restarts.
+
+Returns a `Dict{Int,Matrix{Float64}}` such that `cv[n][iter,fold]`
+stores the mean log-likelihood of *fold* in restart *iter* for an n-state model.
 """
-function crossvalidate(x::Vector{Vector{DDMResult}}, n_folds::Int=5, n_states::Int=5)
-    # Shuffle the sessions of data
-    shuffled_data = shuffle(x)
+function crossvalidate(x::Vector{Vector{DDMResult}};
+                       n_folds::Int = 5,
+                       n_states::Int = 5,
+                       n_iter::Int  = 5,
+                       rng           = Random.GLOBAL_RNG)
 
-    # Calculate the size of each fold
+    ######## 0. build folds once ########
+    shuffled  = shuffle(rng, x)
     fold_size = ceil(Int, length(x) / n_folds)
+    folds = [shuffled[((i-1)*fold_size+1):min(i*fold_size, length(shuffled))] for i in 1:n_folds]
 
-    # Create the folds
-    folds = Vector{Vector{Vector{DDMResult}}}(undef, n_folds)
-    for i in 1:n_folds
-        start = (i - 1) * fold_size + 1
-        stop = min(i * fold_size, length(x))
-        folds[i] = shuffled_data[start:stop]
-    end
-    
-    # Create dict to hold results
-    cvresults = Dict()
-    
-    # Test different numbers of states
+    ######## 1. output containers ########
+    ll   = Dict{Int,Matrix{Float64}}()              # log-likelihoods
     for n in 1:n_states
-        cvresults[n] = Vector{Float64}()
-        
-        # For each fold
-        for i in 1:n_folds
-            # Create a fresh model for each fold
-            init_guess = rand(Dirichlet(10 .* ones(n)))
-            trans_guess = Matrix{Float64}(undef, n, n)
-            for row in eachrow(trans_guess)
-                row .= rand(Dirichlet(10 .* ones(n)))
+        ll[n] = Matrix{Float64}(undef, n_iter, n_folds)
+    end
+    nobs = Matrix{Int}(undef, n_iter, n_folds)      # # observations
+
+    ######## 2. iterate ########
+    for n in 1:n_states
+        @info "⇢ evaluating $n hidden state(s)"
+        for iter in 1:n_iter
+            for fold in 1:n_folds
+                ###### build random initial HMM ######
+                init_guess  = rand(rng, Dirichlet(10 .* ones(n)))
+                trans_guess = reduce(vcat, transpose.([rand(rng, Dirichlet(10 .* ones(n))) for _ in 1:n]))
+                ddms_guess  = [randomDDM() for _ in 1:n]
+                hmm_guess   = HMM(init_guess, trans_guess, ddms_guess)
+
+                ###### split data ######
+                train_idx = setdiff(1:n_folds, fold)
+                train_set = vcat(folds[train_idx]...)
+                test_set  = folds[fold]
+
+                concat_train = reduce(vcat, train_set)
+                train_ends   = cumsum(length.(train_set))
+
+                concat_test  = reduce(vcat, test_set)
+                test_ends    = cumsum(length.(test_set))
+
+                ###### fit & score ######
+                hmm_hat, _ = baum_welch(hmm_guess, concat_train; seq_ends=train_ends)
+                _, ml      = forward(hmm_hat, concat_test; seq_ends=test_ends)
+                ll[n][iter, fold] = sum(ml)
+
+                if n == 1                      # store nobs once per (iter,fold)
+                    nobs[iter,fold] = length(concat_test)
+                end
             end
-            
-            # Create a set number of DDMs
-            ddms_guess = [randomDDM() for _ in 1:n]
-            hmm_guess = HMM(init_guess, trans_guess, ddms_guess)
-            
-            # Create the train and test set
-            train_indices = setdiff(1:n_folds, i)  # All folds except the current test fold
-            train_set = vcat(folds[train_indices]...)
-            test_set = folds[i]
-
-            # Concatenate the train and test sets, also create seq_ends for HiddenMarkovModels.jl
-            concatenated_training = reduce(vcat, train_set)
-            train_seq_ends = cumsum(length.(train_set))
-
-            concatenated_test = reduce(vcat, test_set)
-            test_seq_ends = cumsum(length.(test_set))
-
-            # Fit model
-            hmm_est, lls = baum_welch(hmm_guess, concatenated_training; seq_ends=train_seq_ends)
-
-            # Calculate the loglikelihood of the test set
-            γ, ml = forward(hmm_est, concatenated_test; seq_ends=test_seq_ends)
-
-            # Save the log likelihood results
-            push!(cvresults[n], mean(ml))
-
-            println("Fold $i for $n states done.")
         end
     end
-    return cvresults
+    return (ll = ll, nobs = nobs)
 end
+
