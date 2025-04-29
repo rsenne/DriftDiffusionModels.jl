@@ -57,8 +57,8 @@ function crossvalidate(x::Vector{Vector{DDMResult}};
                 ddms_guess  = [randomDDM() for _ in 1:n]
 
                 # set priors
-                αᵢ = ones(n_states)
-                αₜ = ones(n_states, n_states)
+                αᵢ = ones(n)
+                αₜ = ones(n, n)
                 αₜ[diagind(αₜ)] .= 10.0 # sticky prior
 
                 hmm_guess   = PriorHMM(init_guess, trans_guess, ddms_guess, αₜ, αᵢ)
