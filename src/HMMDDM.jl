@@ -9,118 +9,137 @@ function calculate_ll_ratio(ℓℓ::Float64, ℓℓ₀::Float64, n::Int)
 end
 
 
-
 """
-    PriorHMM(init, trans, dists; αₜ = 1.0, αᵢ = 1.0)
-    PriorHMM(init, trans, dists, αₜ, αᵢ)
+    PriorHMM(init, trans, dists; α_trans = 1, α_init = 1)
+    PriorHMM(init, trans, dists, α_trans, α_init)
 
-Hidden‑Markov model whose **rows of the transition matrix** and **initial
-state probabilities** have symmetric Dirichlet priors.  The
-hyper‑parameters are:
-* `αₜ` – added to every element of the *transition* rows (Dirichlet mass)
-* `αᵢ` – added to every element of the *initial* distribution
+Construct a hidden‑Markov model with Dirichlet priors.
 
-Both the keyword and positional‑argument constructors are provided for
-convenience; giving no hyper‑parameters defaults to 1 (= uniform prior).
+# Arguments
+- `init::Vector{<:Real}`: Initial state probabilities `π` (must sum to 1).
+- `trans::Matrix{<:Real}`: Transition matrix `A` where each row sums to 1.
+- `dists::Vector{D}`: Emission distributions for each state.
+- `α_trans`: Hyper‑parameters for the transition rows.  Accepts a scalar
+  (symmetric prior) **or** a `K×K` matrix for asymmetric priors.
+- `α_init`: Hyper‑parameters for the initial distribution.  Accepts a
+  scalar **or** a length‑`K` vector.
+
+All hyper‑parameters must be strictly positive.  In the EM M‑step they
+enter as *α − 1* pseudo‑counts.
+
+# Examples
+```julia
+K = 3
+αT = ones(K, K);      αT[diagind(αT)] .= 15          # sticky prior
+απ = fill(2.0, K)
+
+hmm = PriorHMM(init, trans, dists; α_trans = αT, α_init = απ)
+baum_welch(hmm, sequences; loglikelihood_increasing = false)
+```
 """
 struct PriorHMM{T<:Real,D} <: HiddenMarkovModels.AbstractHMM
-    init  :: Vector{T}      # π – initial probabilities (∑ = 1)
-    trans :: Matrix{T}      # A – transition matrix (rows sum to 1)
-    dists :: Vector{D}      # length‑K emission distributions
-    αₜ    :: T              # transition‑row Dirichlet mass
-    αᵢ    :: T              # initial‑state Dirichlet mass
+    "Initial state probabilities (π)."
+    init     :: Vector{T}
+    "Transition matrix (A)."
+    trans    :: Matrix{T}
+    "Emission distributions—one per hidden state."
+    dists    :: Vector{D}
+    "Dirichlet hyper‑parameters for *rows* of `A`."
+    α_trans  :: Matrix{T}
+    "Dirichlet hyper‑parameters for `π`."
+    α_init   :: Vector{T}
 
     function PriorHMM(init::Vector{T}, trans::Matrix{T}, dists::Vector{D};
-                      αₜ::T = one(T), αᵢ::T = one(T)) where {T<:Real,D}
+                      α_trans = one(T), α_init = one(T)) where {T<:Real,D}
         K = length(init)
-        @assert size(trans, 1) == K && size(trans, 2) == K  "trans must be K×K"
-        @assert abs(sum(init) - one(T)) < 1e-8              "init must sum to 1"
-        @assert all(abs.(sum(trans; dims = 2) .- 1) .< 1e-8) "each row of trans must sum to 1"
-        new{T,D}(copy(init), copy(trans), deepcopy(dists), αₜ, αᵢ)
+        @assert size(trans) == (K, K)       "`trans` must be K×K"
+        @assert abs(sum(init) - one(T)) < 1e-8       "`init` must sum to 1"
+        @assert all(abs.(sum(trans; dims = 2) .- 1) .< 1e-8) "rows of `trans` must sum to 1"
+
+        αT = isa(α_trans, Number) ? fill(T(α_trans), K, K) : Matrix{T}(α_trans)
+        αI = isa(α_init,  Number) ? fill(T(α_init),  K)   : Vector{T}(α_init)
+
+        @assert all(αT .> zero(T)) "α_trans must be positive"
+        @assert all(αI .> zero(T)) "α_init  must be positive"
+
+        new{T,D}(copy(init), copy(trans), deepcopy(dists), αT, αI)
     end
 end
 
-"""  Positional‑argument convenience wrapper.  """
-function PriorHMM(init::Vector{T}, trans::Matrix{T}, dists::Vector{D}, αₜ::T, αᵢ::T) where {T<:Real,D}
-    PriorHMM(init, trans, dists; αₜ = αₜ, αᵢ = αᵢ)
-end
+# Positional‑argument constructor
+PriorHMM(init, trans, dists, αT, αI) = PriorHMM(init, trans, dists; α_trans = αT, α_init = αI)
 
 Base.length(hmm::PriorHMM) = length(hmm.init)
 
-##########################  Required interface  ##########################
+HiddenMarkovModels.initialization(hmm::PriorHMM)    = hmm.init
+HiddenMarkovModels.transition_matrix(hmm::PriorHMM) = hmm.trans
+HiddenMarkovModels.obs_distributions(hmm::PriorHMM) = hmm.dists
 
-HiddenMarkovModels.initialization(hmm::PriorHMM)      = hmm.init
-HiddenMarkovModels.transition_matrix(hmm::PriorHMM)   = hmm.trans
-HiddenMarkovModels.obs_distributions(hmm::PriorHMM)   = hmm.dists
-
-##########################  Prior log‑density  ###########################
+######################################################################
+# Prior log‑density
+######################################################################
 
 """
-    DensityInterface.logdensityof(hmm::PriorHMM)
+    logdensityof(hmm::PriorHMM) -> Real
 
-Log‑density of the **prior** `p(π, A | αᵢ, αₜ)`.
-For each K‑dimensional symmetric Dirichlet with concentration `α` the
-log normalisation constant is
-```
-log B(α) = log Γ(K⋅α) − K·log Γ(α).
-```
-The density is then
-```
-log p(π) = log B(αᵢ) + Σ_k (αᵢ−1) log π_k,
-log p(A) = Σ_i [ log B(αₜ) + Σ_j (αₜ−1) log A_{ij} ].
-```
+Return the natural‑log density of the Dirichlet priors
+`p(π, A | α_init, α_trans)` evaluated at the current parameters.
+
+Used for posterior computation.
 """
 function DensityInterface.logdensityof(hmm::PriorHMM)
-    K    = length(hmm.init)
-    αₜ   = hmm.αₜ
-    αᵢ   = hmm.αᵢ
-
-    logB_T = loggamma(K*αₜ) - K*loggamma(αₜ)
-    logB_π = loggamma(K*αᵢ) - K*loggamma(αᵢ)
-
-    # transition part
-    lp = K * logB_T + sum((αₜ - 1) .* log.(hmm.trans))
-    # initial part
-    lp += logB_π + sum((αᵢ - 1) .* log.(hmm.init))
+    K  = length(hmm)
+    lp = 0.0
+    # transition rows
+    for i in 1:K
+        α = hmm.α_trans[i, :]
+        lp += lgamma(sum(α)) - sum(lgamma.(α)) + sum((α .- 1) .* log.(hmm.trans[i, :]))
+    end
+    # initial distribution
+    απ = hmm.α_init
+    lp += lgamma(sum(απ)) - sum(lgamma.(απ)) + sum((απ .- 1) .* log.(hmm.init))
     return lp
 end
 
-##########################  MAP Baum‑Welch  ##############################
+######################################################################
+# Baum–Welch M‑step (MAP)
+######################################################################
 
 """
     StatsAPI.fit!(hmm::PriorHMM,
-                  fb_storage::HiddenMarkovModels.ForwardBackwardStorage,
-                  obs_seq::AbstractVector;
-                  seq_ends)
+                  fb::HiddenMarkovModels.ForwardBackwardStorage,
+                  obs_seq::AbstractVector; seq_ends)
 
-Baum–Welch M‑step **compatible with HiddenMarkovModels.jl**.  The arrays
-`fb_storage.γ` and `fb_storage.ξ` already contain the expected state and
-transition counts from the forward–backward pass.  We fold **Dirichlet
-pseudocounts** `αᵢ` and `αₜ` into those counts before renormalising.
+Perform the M‑step of the Baum–Welch algorithm **with Dirichlet
+pseudo‑counts**.
+
+The forward–backward storage `fb` must already contain γ and ξ arrays.
+Dirichlet parameters contribute `α − 1` additional counts before
+normalising.
+
+This method is called internally by `HiddenMarkovModels.baum_welch!` and
+is not intended for direct use.
 """
 function StatsAPI.fit!(hmm::PriorHMM,
-                       fb_storage::HiddenMarkovModels.ForwardBackwardStorage,
+                       fb::HiddenMarkovModels.ForwardBackwardStorage,
                        obs_seq::AbstractVector; seq_ends)
     K = length(hmm)
 
-    ####################  accumulate counts  ####################
-    init_counts  = fill(hmm.αᵢ, K)            # prior pseudocounts for π
-    trans_counts = fill(hmm.αₜ, K, K)         # prior pseudocounts for A
+    init_counts  = hmm.α_init  .- 1           # prior for π
+    trans_counts = hmm.α_trans .- 1           # prior for A
 
     for k in eachindex(seq_ends)
         t1, t2 = HiddenMarkovModels.seq_limits(seq_ends, k)
-        init_counts  .+= fb_storage.γ[:, t1]
-        trans_counts .+= sum(fb_storage.ξ[t1:t2])
+        init_counts  .+= fb.γ[:, t1]
+        trans_counts .+= sum(fb.ξ[t1:t2])
     end
 
-    ####################  renormalise  ##########################
     hmm.init  .= init_counts ./ sum(init_counts)
     hmm.trans .= trans_counts ./ sum(trans_counts; dims = 2)
 
-    ####################  emissions  ############################
+    # update each emission model using state marginals γ
     for i in 1:K
-        weight_seq = fb_storage.γ[i, :]
-        StatsAPI.fit!(hmm.dists[i], obs_seq, weight_seq)
+        StatsAPI.fit!(hmm.dists[i], obs_seq, fb.γ[i, :])
     end
 
     @assert HiddenMarkovModels.valid_hmm(hmm)

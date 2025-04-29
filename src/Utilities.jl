@@ -55,7 +55,13 @@ function crossvalidate(x::Vector{Vector{DDMResult}};
                 init_guess  = rand(rng, Dirichlet(10 .* ones(n)))
                 trans_guess = reduce(vcat, transpose.([rand(rng, Dirichlet(10 .* ones(n))) for _ in 1:n]))
                 ddms_guess  = [randomDDM() for _ in 1:n]
-                hmm_guess   = HMM(init_guess, trans_guess, ddms_guess)
+
+                # set priors
+                αᵢ = ones(n_states)
+                αₜ = ones(n_states, n_states)
+                αₜ[diagind(αₜ)] .= 10.0 # sticky prior
+
+                hmm_guess   = PriorHMM(init_guess, trans_guess, ddms_guess, αₜ, αᵢ)
 
                 ###### split data ######
                 train_idx = setdiff(1:n_folds, fold)
