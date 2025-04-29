@@ -75,75 +75,41 @@ end
 ##########################  MAP Baum‑Welch  ##############################
 
 """
-    StatsAPI.fit!(hmm::PriorHMM, seqs; max_iter = 100, atol = 1e-6, w = ones(length(seqs)))
+    StatsAPI.fit!(hmm::PriorHMM,
+                  fb_storage::HiddenMarkovModels.ForwardBackwardStorage,
+                  obs_seq::AbstractVector;
+                  seq_ends)
 
-Expectation–Maximisation (Baum–Welch) **with Dirichlet pseudocounts**.
-Adding `αᵢ` and `αₜ` to the expected counts yields the Maximum A Posteriori
-(MAP) estimate under the symmetric Dirichlet priors.
+Baum–Welch M‑step **compatible with HiddenMarkovModels.jl**.  The arrays
+`fb_storage.γ` and `fb_storage.ξ` already contain the expected state and
+transition counts from the forward–backward pass.  We fold **Dirichlet
+pseudocounts** `αᵢ` and `αₜ` into those counts before renormalising.
 """
-function StatsAPI.fit!(hmm::PriorHMM, seqs::Vector{<:AbstractVector};
-                       w::AbstractVector{<:Real} = ones(length(seqs)),
-                       max_iter::Int = 100,
-                       atol::Float64 = 1e-6)
-    K      = length(hmm.init)
-    π      = copy(hmm.init)
-    A      = copy(hmm.trans)
-    dists  = deepcopy(hmm.dists)
-    αᵢ, αₜ = hmm.αᵢ, hmm.αₜ
+function StatsAPI.fit!(hmm::PriorHMM,
+                       fb_storage::HiddenMarkovModels.ForwardBackwardStorage,
+                       obs_seq::AbstractVector; seq_ends)
+    K = length(hmm)
 
-    for _ in 1:max_iter
-        γ₁      = zeros(eltype(π), K)          # expected initial counts
-        ξ_tot   = zeros(eltype(π), K, K)       # expected transition counts
-        suff    = [HiddenMarkovModels.zero_stats(d) for d in dists]
-        ll_prev = 0.0
+    ####################  accumulate counts  ####################
+    init_counts  = fill(hmm.αᵢ, K)            # prior pseudocounts for π
+    trans_counts = fill(hmm.αₜ, K, K)         # prior pseudocounts for A
 
-        ################  E‑STEP  ################
-        for (seq, wt) in zip(seqs, w)
-            α, c = HiddenMarkovModels.forward(seq, π, A, dists)
-            β     = HiddenMarkovModels.backward(seq, A, dists, c)
-            Tseq  = length(seq)
-
-            # γ_t(i) ∝ α_t(i) β_t(i)
-            γ = α .* β
-            normγ = sum(γ; dims = 1)
-            γ ./= normγ
-
-            γ₁      .+= wt .* vec(γ[:, 1])
-            ll_prev += wt * sum(log.(c))
-
-            # ξ_t(i,j) ∝ α_t(i) A_{ij} p(y_{t+1}|j) β_{t+1}(j)
-            for t in 1:(Tseq - 1)
-                ξ = A .* (α[:, t] .* HiddenMarkovModels.pdf.(dists, seq[t+1])') .* β[:, t+1]'
-                ξ ./= sum(ξ)
-                ξ_tot .+= wt .* ξ
-            end
-
-            # accumulate emission sufficient statistics
-            for k in 1:K
-                HiddenMarkovModels.accum_stats!(suff[k], seq, vec(γ[k, :]), wt)
-            end
-        end
-
-        ################  M‑STEP  ################
-        γ₁    .+= αᵢ
-        ξ_tot .+= αₜ
-
-        new_π = γ₁ / sum(γ₁)
-        new_A = ξ_tot ./ sum(ξ_tot; dims = 2)
-
-        for k in 1:K
-            HiddenMarkovModels.update!(dists[k], suff[k])
-        end
-
-        if maximum(abs.(π .- new_π)) < atol && maximum(abs.(A .- new_A)) < atol
-            π, A = new_π, new_A
-            break
-        end
-        π, A = new_π, new_A
+    for k in eachindex(seq_ends)
+        t1, t2 = HiddenMarkovModels.seq_limits(seq_ends, k)
+        init_counts  .+= fb_storage.γ[:, t1]
+        trans_counts .+= sum(fb_storage.ξ[t1:t2])
     end
 
-    hmm.init  .= π
-    hmm.trans .= A
-    hmm.dists .= dists
-    return hmm
+    ####################  renormalise  ##########################
+    hmm.init  .= init_counts ./ sum(init_counts)
+    hmm.trans .= trans_counts ./ sum(trans_counts; dims = 2)
+
+    ####################  emissions  ############################
+    for i in 1:K
+        weight_seq = fb_storage.γ[i, :]
+        StatsAPI.fit!(hmm.dists[i], obs_seq, weight_seq)
+    end
+
+    @assert HiddenMarkovModels.valid_hmm(hmm)
+    return nothing
 end
