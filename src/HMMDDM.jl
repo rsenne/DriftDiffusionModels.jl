@@ -9,30 +9,43 @@ function calculate_ll_ratio(ℓℓ::Float64, ℓℓ₀::Float64, n::Int)
 end
 
 
+
 """
     PriorHMM(init, trans, dists; αₜ = 1.0, αᵢ = 1.0)
+    PriorHMM(init, trans, dists, αₜ, αᵢ)
 
-A Hidden Markov Model that places **symmetric Dirichlet priors** on the
-transition matrix rows (hyper‑parameter `αₜ`) and on the initial state
-probabilities (hyper‑parameter `αᵢ`).  Setting `αₜ = αᵢ = 1` recovers the
-standard maximum‑likelihood estimate.
+Hidden‑Markov model whose **rows of the transition matrix** and **initial
+state probabilities** have symmetric Dirichlet priors.  The
+hyper‑parameters are:
+* `αₜ` – added to every element of the *transition* rows (Dirichlet mass)
+* `αᵢ` – added to every element of the *initial* distribution
+
+Both the keyword and positional‑argument constructors are provided for
+convenience; giving no hyper‑parameters defaults to 1 (= uniform prior).
 """
 struct PriorHMM{T<:Real,D} <: HiddenMarkovModels.AbstractHMM
-    init  :: Vector{T}      # π
-    trans :: Matrix{T}      # A (rows sum to 1)
-    dists :: Vector{D}      # emission distributions
-    αₜ    :: T              # symmetric Dirichlet mass for each row of A
-    αᵢ    :: T              # symmetric Dirichlet mass for π
+    init  :: Vector{T}      # π – initial probabilities (∑ = 1)
+    trans :: Matrix{T}      # A – transition matrix (rows sum to 1)
+    dists :: Vector{D}      # length‑K emission distributions
+    αₜ    :: T              # transition‑row Dirichlet mass
+    αᵢ    :: T              # initial‑state Dirichlet mass
 
     function PriorHMM(init::Vector{T}, trans::Matrix{T}, dists::Vector{D};
                       αₜ::T = one(T), αᵢ::T = one(T)) where {T<:Real,D}
         K = length(init)
-        @assert size(trans, 1) == K && size(trans, 2) == K  "Transition matrix must be K×K"
-        @assert abs(sum(init) - one(T)) < 1e-8              "Initial probabilities must sum to 1"
-        @assert all(abs.(sum(trans; dims = 2) .- 1) .< 1e-8) "Each row of transition matrix must sum to 1"
+        @assert size(trans, 1) == K && size(trans, 2) == K  "trans must be K×K"
+        @assert abs(sum(init) - one(T)) < 1e-8              "init must sum to 1"
+        @assert all(abs.(sum(trans; dims = 2) .- 1) .< 1e-8) "each row of trans must sum to 1"
         new{T,D}(copy(init), copy(trans), deepcopy(dists), αₜ, αᵢ)
     end
 end
+
+"""  Positional‑argument convenience wrapper.  """
+function PriorHMM(init::Vector{T}, trans::Matrix{T}, dists::Vector{D}, αₜ::T, αᵢ::T) where {T<:Real,D}
+    PriorHMM(init, trans, dists; αₜ = αₜ, αᵢ = αᵢ)
+end
+
+Base.length(hmm::PriorHMM) = length(hmm.init)
 
 ##########################  Required interface  ##########################
 
