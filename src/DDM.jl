@@ -34,6 +34,98 @@ function DDMResult(;rt::Float64, choice::Int)
 end
 
 """
+    wfpt(t, v, a, z, err=1e-8)
+
+Calculate the Wiener First Passage Time (WFPT) density at time t for a drift diffusion model
+with drift rate v, boundary separation a, starting point z, and error tolerance err.
+
+This implementation follows the algorithm described in Navarro & Fuss (2009).
+"""
+function wfpt(t::Real, v::Real, a::Real, z::Real, err::Real=1e-8)
+    # Check for valid inputs
+    if t <= 0
+        return 0.0
+    end
+    
+    # Use normalized time and relative start point
+    tt = t / (a^2)
+    w = z / a
+    
+    # Calculate number of terms needed for large t version
+    if π * tt * err < 1  # if error threshold is set low enough
+        kl = sqrt(-2 * log(π * tt * err) / (π^2 * tt))  # bound
+        kl = max(kl, 1 / (π * sqrt(tt)))  # ensure boundary conditions met
+    else  # if error threshold set too high
+        kl = 1 / (π * sqrt(tt))  # set to boundary condition
+    end
+    
+    # Calculate number of terms needed for small t version
+    if 2 * sqrt(2 * π * tt) * err < 1  # if error threshold is set low enough
+        ks = 2 + sqrt(-2 * tt * log(2 * sqrt(2 * π * tt) * err))  # bound
+        ks = max(ks, sqrt(tt) + 1)  # ensure boundary conditions are met
+    else  # if error threshold was set too high
+        ks = 2  # minimal kappa for that case
+    end
+    
+    # Compute f(tt|0,1,w)
+    p = 0.0  # initialize density
+    if ks < kl  # if small t is better...
+        K = ceil(Int, ks)  # round to smallest integer meeting error
+        for k in -floor(Int, (K-1)/2):ceil(Int, (K-1)/2)  # loop over k
+            p += (w + 2 * k) * exp(-((w + 2 * k)^2) / 2 / tt)  # increment sum
+        end
+        p /= sqrt(2 * π * tt^3)  # add constant term
+    else  # if large t is better...
+        K = ceil(Int, kl)  # round to smallest integer meeting error
+        for k in 1:K
+            p += k * exp(-(k^2) * (π^2) * tt / 2) * sin(k * π * w)  # increment sum
+        end
+        p *= π  # add constant term
+    end
+    
+    # Convert to f(t|v,a,w)
+    return p * exp(-v * a * w - (v^2) * t / 2) / (a^2)
+end
+
+"""
+    simulateDDM(model::DriftDiffusionModel, dt::FLoat64=1e-5)
+
+Generate a single trial of a drift diffusion model using the Euler-Maruyama method.
+"""
+function simulateDDM(model::DriftDiffusionModel, dt::Float64=1e-5)
+    @unpack B, v, a₀, σ = model
+
+    # initialize variables
+    t = 0.0
+    a = a₀
+
+    while a < B && a > -B
+        # run the model forward in time
+        a += v * dt + (σ * sqrt(dt) * randn())
+        t += dt
+    end
+
+    if a >= B
+        choice = 1  # upper boundary hit
+    else
+        choice = -1  # lower boundary hit
+    end
+
+    return DDMResult(t, choice)
+end
+
+"""
+    simulateDDM(model::DriftDiffusionModel, n::Int, dt::Float64=1e-5)
+"""
+function simulateDDM(model::DriftDiffusionModel, n::Int, dt::Float64=1e-5)
+    results = Vector{DDMResult}(undef, n)
+    @threads for i in 1:n
+        results[i] = simulateDDM(model, dt)
+    end
+    return results
+end
+
+"""
     Random.rand(model::DriftDiffusionModel)
 
 Generates RT and choices from a drift diffusion model. 
@@ -142,11 +234,12 @@ function logdensityof(B::TB, v::TV, a₀::TA, σ::TS, rt::Float64, choice::Int) 
         return -Inf
     end
 
-    μ = distance / abs(v)
-    λ = distance^2 / σ^2
+    # Reparameterize the parameters of the model to pass to the wfpt function.
+    A = 2 * B # boundary separation
+    z = α₀ + B
 
-    ig = InverseGaussian(μ, λ)
-    return logpdf(ig, rt)
+    density = choice == 1 ? wfpt(rt, -v, A, 1 - z) : wfpt(rt, v, A, z)
+    return log(density)
 end
 
 
