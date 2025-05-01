@@ -83,7 +83,8 @@ function wfpt(t::Real, v::Real, B::Real, w::Real, err::Real=1e-12)
     end
     
     # Convert to f(t|v,B,w)
-    return p * exp(-v * B * w - (v^2) * t / 2) / (B^2)
+    density = p * exp(-v * B * w - (v^2) * t / 2) / (B^2)
+    return max(density, 0.0)  # ensure non-negative density (occasionaly generates neg values e.g., -1e-21)
 end
 
 """
@@ -163,8 +164,14 @@ function logdensityof(B::TB, v::TV, a₀::TA, σ::TS, rt::Float64, choice::Int) 
 
     # calculate the Wiener first passage time density
     density = wfpt(rt, v, B, w)
+    logdens = log(density)
 
-    return log(density)
+    # check if density is Inf (i.e., log(0)) and return a very large value if so
+    if isinf(logdens)
+        return -1e16
+    end
+
+    return logdens
 end
 
 

@@ -9,7 +9,7 @@ function randomDDM()
     v = rand(Uniform(1e-3, 9.0))
     
     # Generate a₀ as a fraction of B to ensure proper bounds
-    a₀ = rand(Uniform(-0.9, 0.9))  # Keep a₀ within ±90% of boundary
+    a₀ = rand(Uniform(0.1, 0.9))  # Keep a₀ within boundary
     
     σ = 1.0 # fixed for identifiability
     return DriftDiffusionModel(B, v, a₀, σ)
@@ -58,7 +58,7 @@ function crossvalidate(x::Vector{Vector{DDMResult}};
                 # set priors
                 αᵢ = ones(n)
                 αₜ = ones(n, n)
-                αₜ[diagind(αₜ)] .= 10.0 # sticky prior
+                αₜ[diagind(αₜ)] .= 2.0 # sticky prior
 
                 hmm_guess   = PriorHMM(init_guess, trans_guess, ddms_guess, αₜ, αᵢ)
 
