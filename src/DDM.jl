@@ -41,7 +41,7 @@ with drift rate v, boundary separation B, starting point α₀, and error tolera
 
 This implementation follows the algorithm described in Navarro & Fuss (2009).
 """
-function wfpt(t::Real, v::Real, B::Real, z::Real, err::Real=1e-12)
+function wfpt(t::Real, v::Real, B::Real, w::Real, err::Real=1e-12)
     # Check for valid inputs
     if t <= 0
         return 0.0
@@ -49,7 +49,6 @@ function wfpt(t::Real, v::Real, B::Real, z::Real, err::Real=1e-12)
     
     # Use normalized time and relative start point
     tt = t / (B^2)
-    w = z / B
     
     # Calculate number of terms needed for large t version
     if π * tt * err < 1  # if error threshold is set low enough
@@ -83,8 +82,8 @@ function wfpt(t::Real, v::Real, B::Real, z::Real, err::Real=1e-12)
         p *= π  # add constant term
     end
     
-    # Convert to f(t|v,a,w)
-    return p * exp(-v * B * w - (v^2) * t / 2) / (a^2)
+    # Convert to f(t|v,B,w)
+    return p * exp(-v * B * w - (v^2) * t / 2) / (B^2)
 end
 
 """
@@ -97,9 +96,9 @@ function simulateDDM(model::DriftDiffusionModel, dt::Float64=1e-5, rng::Abstract
 
     # initialize variables
     t = 0.0
-    a = a₀
+    a = a₀ * B  # initial accumulation
 
-    while a < B && a > -B
+    while a < B && a > 0
         # run the model forward in time
         a += v * dt + (σ * sqrt(dt) * randn(rng))
         t += dt
@@ -159,11 +158,11 @@ function logdensityof(B::TB, v::TV, a₀::TA, σ::TS, rt::Float64, choice::Int) 
     B, v, a₀, σ = T(B), T(v), T(a₀), T(σ)
 
     # determine which version of the wpft to use: upper or lower boundary
-    v, w = choice == 1 ? v : -v, choice == 1 ? 1 - α₀ : α₀
+    v, w = choice == 1 ? -v : v, choice == 1 ? 1 - a₀ : a₀
 
 
     # calculate the Wiener first passage time density
-    density = choice == 1 ? wfpt(rt, -v, A, w) : wfpt(rt, v, A, w)
+    density = wfpt(rt, v, B, w)
 
     return log(density)
 end
@@ -177,19 +176,13 @@ Perform parameter estimation of a drift diffusion model using MLE given a vector
 function StatsAPI.fit!(model::DriftDiffusionModel, x::Vector{DDMResult}, w::AbstractVector{<:Real}=ones(length(x)))
     @unpack B, v, a₀, σ = model
     
-    # Calculate the initial a₀ as a fraction of B
-    a₀_frac = a₀ / B
-    
     # Define negative log-likelihood function for optimization
     function neg_log_likelihood(params)
         # We optimize B, drift rate, and a₀ as a fraction of B
-        B_temp, v_temp, a₀_frac = params
-        
-        # Calculate actual a₀ based on fraction (always stays within bounds)
-        a₀_temp = a₀_frac * B_temp
+        B_temp, v_temp, a₀_temp = params
         
         # Early return for invalid boundary (must be positive)
-        if B_temp <= 0
+        if B_temp < 0
             return convert(typeof(B_temp), Inf)
         end
         
@@ -203,12 +196,12 @@ function StatsAPI.fit!(model::DriftDiffusionModel, x::Vector{DDMResult}, w::Abst
         return -ll
     end
     
-    # Set up optimization with reparameterized a₀
-    initial_params = [B, v, a₀_frac]
+    # Set up optimization
+    initial_params = [B, v, a₀]
     
     # Add bounds - a₀_frac must be between -1 and 1
-    lower_bounds = [0.001, -Inf, -0.999]
-    upper_bounds = [Inf, Inf, 0.999]
+    lower_bounds = [0.001, -Inf, 1e-3]
+    upper_bounds = [Inf, Inf, 1-1e-3]
     
     # Optimize using L-BFGS-B to respect the bounds
     result = optimize(neg_log_likelihood, lower_bounds, upper_bounds, initial_params, Fminbox(LBFGS()), autodiff=:forward)
@@ -219,7 +212,7 @@ function StatsAPI.fit!(model::DriftDiffusionModel, x::Vector{DDMResult}, w::Abst
     # Update the model with new parameter estimates
     model.B = optimal_params[1]
     model.v = optimal_params[2]
-    model.a₀ = optimal_params[3] * optimal_params[1]  # Convert fraction back to absolute value
+    model.a₀ = optimal_params[3]
     
     return model
 end
