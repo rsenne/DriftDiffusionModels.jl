@@ -4,16 +4,16 @@
 Implement a simple drift diffusion model: da/dt = v + σdW.
 """
 mutable struct DriftDiffusionModel
-    B::Float64 #Bound Height
+    B::Float64 # Boundary Separation
     v::Float64 # Drift Rate
-    a₀::Float64 # Initial Accumulation
+    a₀::Float64 # Initial Accumulation: parameterized as a fraction of B
     σ::Float64 # Noise--set to 1.0 be default for identifiability
 end
 
 function DriftDiffusionModel(;
-    B::Float64=10.0, #Bound Height
+    B::Float64=5.0, #Bound Height
     v::Float64=1.0, # Drift Rate
-    a₀::Float64=0.0, # Initial Accumulation
+    a₀::Float64=0.5, # Initial Accumulation
     σ::Float64=1.0 # Noise--set to 1.0 be default for identifiability
 ) 
     return DriftDiffusionModel(B, v, a₀, σ)
@@ -34,22 +34,22 @@ function DDMResult(;rt::Float64, choice::Int)
 end
 
 """
-    wfpt(t, v, a, z, err=1e-8)
+    wfpt(t, v, B, z, err=1e-8)
 
 Calculate the Wiener First Passage Time (WFPT) density at time t for a drift diffusion model
-with drift rate v, boundary separation a, starting point z, and error tolerance err.
+with drift rate v, boundary separation B, starting point α₀, and error tolerance err.
 
 This implementation follows the algorithm described in Navarro & Fuss (2009).
 """
-function wfpt(t::Real, v::Real, a::Real, z::Real, err::Real=1e-8)
+function wfpt(t::Real, v::Real, B::Real, z::Real, err::Real=1e-12)
     # Check for valid inputs
     if t <= 0
         return 0.0
     end
     
     # Use normalized time and relative start point
-    tt = t / (a^2)
-    w = z / a
+    tt = t / (B^2)
+    w = z / B
     
     # Calculate number of terms needed for large t version
     if π * tt * err < 1  # if error threshold is set low enough
@@ -84,7 +84,7 @@ function wfpt(t::Real, v::Real, a::Real, z::Real, err::Real=1e-8)
     end
     
     # Convert to f(t|v,a,w)
-    return p * exp(-v * a * w - (v^2) * t / 2) / (a^2)
+    return p * exp(-v * B * w - (v^2) * t / 2) / (a^2)
 end
 
 """
@@ -92,7 +92,7 @@ end
 
 Generate a single trial of a drift diffusion model using the Euler-Maruyama method.
 """
-function simulateDDM(model::DriftDiffusionModel, dt::Float64=1e-5)
+function simulateDDM(model::DriftDiffusionModel, dt::Float64=1e-5, rng::AbstractRNG=Random.default_rng())
     @unpack B, v, a₀, σ = model
 
     # initialize variables
@@ -101,7 +101,7 @@ function simulateDDM(model::DriftDiffusionModel, dt::Float64=1e-5)
 
     while a < B && a > -B
         # run the model forward in time
-        a += v * dt + (σ * sqrt(dt) * randn())
+        a += v * dt + (σ * sqrt(dt) * randn(rng))
         t += dt
     end
 
@@ -126,83 +126,14 @@ function simulateDDM(model::DriftDiffusionModel, n::Int, dt::Float64=1e-5)
 end
 
 """
-    Random.rand(model::DriftDiffusionModel)
+    Random.rand(rng::AbstractRNG, model::DriftDiffusionModel)
 
-Generates RT and choices from a drift diffusion model. 
+Generate a single trial of the drift diffusion model using the Euler-Maruyama method--needed for HiddenMarkovModels.jl
 """
-function Random.rand(model::DriftDiffusionModel)
-    @unpack B, v, a₀, σ = model
-    
-    # For symmetric boundaries at +B and -B, the probability of hitting 
-    # the upper boundary can be calculated as:
-    if abs(v) < 1e-10
-        # With zero drift, probability depends only on starting position
-        p_upper = (B + a₀) / (2 * B)
-    else
-        # Standard formula for probability of hitting upper boundary with symmetric bounds
-        p_upper = 1 / (1 + exp(-2 * v * a₀ / σ^2))
-    end
-    
-    # Ensure p_upper is a valid probability
-    p_upper = clamp(p_upper, 0.0, 1.0)
-    
-    # Determine choice based on probability
-    u = rand()
-    choice = u < p_upper ? 1 : -1
-    
-    # Calculate parameters for the first passage time distribution
-    if choice == 1
-        # For upper boundary
-        μ = (B - a₀) / abs(v)
-        λ = (B - a₀)^2 / σ^2
-    else
-        # For lower boundary
-        μ = (B + a₀) / abs(v)
-        λ = (B + a₀)^2 / σ^2
-    end
-    
-    # Sample from the inverse Gaussian distribution
-    ig = InverseGaussian(μ, λ)
-    rt = rand(ig)
-    
-    return DDMResult(rt, choice)
-end
-
-"""
-    Random.rand(model::DriftDiffusionModel, n::Int)
-
-Generates n trials (RT and choices) from a drift diffusion model.
-Returns a vector of DDMResult objects.
-"""
-function Random.rand(model::DriftDiffusionModel, n::Int)
-    results = Vector{DDMResult}(undef, n)
-    for i in 1:n
-        results[i] = rand(model)
-    end
-    return results
-end
-
 function Random.rand(rng::AbstractRNG, model::DriftDiffusionModel)
-    @unpack B, v, a₀, σ = model
-
-    p_upper = abs(v) < 1e-10 ? (B + a₀) / (2 * B) : 1 / (1 + exp(-2 * v * a₀ / σ^2))
-    p_upper = clamp(p_upper, 0.0, 1.0)
-
-    u = rand(rng)
-    choice = u < p_upper ? 1 : -1
-
-    if choice == 1
-        μ = (B - a₀) / abs(v)
-        λ = (B - a₀)^2 / σ^2
-    else
-        μ = (B + a₀) / abs(v)
-        λ = (B + a₀)^2 / σ^2
-    end
-
-    rt = rand(rng, InverseGaussian(μ, λ))
-    return DDMResult(rt, choice)
+    # Generate a single trial of the drift diffusion model
+    return simulateDDM(model, 1e-6, rng)
 end
-
 
 # Tell Density Interface that DDMResult is a distribution
 DensityInterface.DensityKind(::DriftDiffusionModel) = HasDensity()
@@ -227,18 +158,13 @@ function logdensityof(B::TB, v::TV, a₀::TA, σ::TS, rt::Float64, choice::Int) 
     T = promote_type(TB, TV, TA, TS)
     B, v, a₀, σ = T(B), T(v), T(a₀), T(σ)
 
-    distance = choice == 1 ? B - a₀ : B + a₀
+    # determine which version of the wpft to use: upper or lower boundary
+    v, w = choice == 1 ? v : -v, choice == 1 ? 1 - α₀ : α₀
 
-    # Check if distance is non-positive
-    if distance <= 0
-        return -Inf
-    end
 
-    # Reparameterize the parameters of the model to pass to the wfpt function.
-    A = 2 * B # boundary separation
-    z = α₀ + B
+    # calculate the Wiener first passage time density
+    density = choice == 1 ? wfpt(rt, -v, A, w) : wfpt(rt, v, A, w)
 
-    density = choice == 1 ? wfpt(rt, -v, A, 1 - z) : wfpt(rt, v, A, z)
     return log(density)
 end
 
