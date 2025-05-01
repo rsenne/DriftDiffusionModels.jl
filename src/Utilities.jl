@@ -5,12 +5,11 @@ Generate a random Drift Diffusion Model.
 """
 function randomDDM()
     # Generate random parameters for the DDM
-    B = rand(Uniform(0.1, 20.0)) # Bound Height
+    B = rand(Uniform(0.1, 20.0)) # Boundary Separation
     v = rand(Uniform(1e-3, 9.0))
     
     # Generate a₀ as a fraction of B to ensure proper bounds
-    a₀_frac = rand(Uniform(-0.9, 0.9))  # Keep a₀ within ±90% of boundary
-    a₀ = a₀_frac * B
+    a₀ = rand(Uniform(-0.9, 0.9))  # Keep a₀ within ±90% of boundary
     
     σ = 1.0 # fixed for identifiability
     return DriftDiffusionModel(B, v, a₀, σ)
