@@ -15,10 +15,10 @@ function DriftDiffusionModel(;
     B::Float64=5.0, #Bound Height
     v::Float64=1.0, # Drift Rate
     a₀::Float64=0.5, # Initial Accumulation
-    τ::Float64=0.0 # Non-decision time
+    τ::Float64=0.0, # Non-decision time
     σ::Float64=1.0 # Noise--set to 1.0 be default for identifiability
 ) 
-    return DriftDiffusionModel(B, v, a₀, σ)
+    return DriftDiffusionModel(B, v, a₀, τ, σ)
 end
 
 """
