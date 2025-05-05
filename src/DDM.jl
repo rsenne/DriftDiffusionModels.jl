@@ -7,7 +7,7 @@ mutable struct DriftDiffusionModel
     B::Float64 # Boundary Separation
     v::Float64 # Drift Rate
     a₀::Float64 # Initial Accumulation: parameterized as a fraction of B
-    τ::Floatt64 # Non-decision time
+    τ::Float64 # Non-decision time
     σ::Float64 # Noise--set to 1.0 be default for identifiability
 end
 
@@ -86,7 +86,7 @@ function wfpt(t::Real, v::Real, B::Real, w::Real, τ::Real, err::Real=1e-12)
     
     # Convert to f(t|v,B,w)
     density = p * exp(-v * B * w - (v^2) * (t - τ) / 2) / (B^2)
-    return max(density, 0.0)  # ensure non-negative density (occasionaly generates neg values e.g., -1e-21) (maybe return +ϵ instead?)
+    return max(density, 1e-12)  # ensure non-negative density (occasionaly generates neg values e.g., -1e-21) (maybe return +ϵ instead?)
 end
 
 """
@@ -162,7 +162,7 @@ function logdensityof(B::TB, v::TV, a₀::TA, τ::TT, σ::TS, rt::Float64, choic
     end
 
     T = promote_type(TB, TV, TA, TT, TS)
-    B, v, a₀, σ = T(B), T(v), T(a₀), T(τ), T(σ)
+    B, v, a₀, τ, σ = T(B), T(v), T(a₀), T(τ), T(σ)
 
     # determine which version of the wpft to use: upper or lower boundary
     v, w = choice == 1 ? -v : v, choice == 1 ? 1 - a₀ : a₀
@@ -192,7 +192,7 @@ function StatsAPI.fit!(model::DriftDiffusionModel, x::Vector{DDMResult}, w::Abst
     # Define negative log-likelihood function for optimization
     function neg_log_likelihood(params)
         # We optimize B, drift rate, and a₀ as a fraction of B
-        B_temp, v_temp, a₀_temp, τ_temp = params
+        B_temp, v_temp, τ_temp = params
         
         # Early return for invalid boundary (must be positive)
         if B_temp < 0
@@ -202,7 +202,7 @@ function StatsAPI.fit!(model::DriftDiffusionModel, x::Vector{DDMResult}, w::Abst
         # Calculate log-likelihood using the raw parameters version
         ll = 0.0
         for i in 1:length(x)
-            ll += w[i] * logdensityof(B_temp, v_temp, a₀_temp, τ_temp, σ, x[i].rt, x[i].choice)
+            ll += w[i] * logdensityof(B_temp, v_temp, a₀, τ_temp, σ, x[i].rt, x[i].choice)
         end
         
         # Return negative since optimizers typically minimize
@@ -210,11 +210,11 @@ function StatsAPI.fit!(model::DriftDiffusionModel, x::Vector{DDMResult}, w::Abst
     end
     
     # Set up optimization
-    initial_params = [B, v, a₀, τ]
+    initial_params = [B, v, τ]
     
     # Add bounds - a₀_frac must be between -1 and 1
-    lower_bounds = [0.001, -Inf, 1e-3, 1e-3]
-    upper_bounds = [Inf, Inf, 1-1e-3, Inf]
+    lower_bounds = [0.001, -Inf, 1e-3]
+    upper_bounds = [50.0, 10.0, 5.0]
     
     # Optimize using L-BFGS-B to respect the bounds
     result = optimize(neg_log_likelihood, lower_bounds, upper_bounds, initial_params, Fminbox(LBFGS()), autodiff=:forward)
@@ -225,8 +225,8 @@ function StatsAPI.fit!(model::DriftDiffusionModel, x::Vector{DDMResult}, w::Abst
     # Update the model with new parameter estimates
     model.B = optimal_params[1]
     model.v = optimal_params[2]
-    model.a₀ = optimal_params[3]
-    model.τ = optimal_params[4]
+    # model.a₀ = optimal_params[3]
+    model.τ = optimal_params[3]
     
     return model
 end
