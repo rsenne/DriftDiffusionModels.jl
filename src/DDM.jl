@@ -7,6 +7,7 @@ mutable struct DriftDiffusionModel
     B::Float64 # Boundary Separation
     v::Float64 # Drift Rate
     a₀::Float64 # Initial Accumulation: parameterized as a fraction of B
+    τ::Float64 # Non-decision time
     σ::Float64 # Noise--set to 1.0 be default for identifiability
 end
 
@@ -14,9 +15,10 @@ function DriftDiffusionModel(;
     B::Float64=5.0, #Bound Height
     v::Float64=1.0, # Drift Rate
     a₀::Float64=0.5, # Initial Accumulation
+    τ::Float64=0.0, # Non-decision time
     σ::Float64=1.0 # Noise--set to 1.0 be default for identifiability
 ) 
-    return DriftDiffusionModel(B, v, a₀, σ)
+    return DriftDiffusionModel(B, v, a₀, τ, σ)
 end
 
 """
@@ -34,21 +36,21 @@ function DDMResult(;rt::Float64, choice::Int)
 end
 
 """
-    wfpt(t, v, B, z, err=1e-8)
+    wfpt(t, v, B, z, τ, err=1e-8)
 
 Calculate the Wiener First Passage Time (WFPT) density at time t for a drift diffusion model
-with drift rate v, boundary separation B, starting point α₀, and error tolerance err.
+with drift rate v, boundary separation B, starting point α₀, non-decision time τ, and error tolerance err.
 
 This implementation follows the algorithm described in Navarro & Fuss (2009).
 """
-function wfpt(t::Real, v::Real, B::Real, w::Real, err::Real=1e-12)
+function wfpt(t::Real, v::Real, B::Real, w::Real, τ::Real, err::Real=1e-12)
     # Check for valid inputs
-    if t <= 0
+    if t <= τ
         return 0.0
     end
     
     # Use normalized time and relative start point
-    tt = t / (B^2)
+    tt = (t - τ) / (B^2)
     
     # Calculate number of terms needed for large t version
     if π * tt * err < 1  # if error threshold is set low enough
@@ -83,8 +85,8 @@ function wfpt(t::Real, v::Real, B::Real, w::Real, err::Real=1e-12)
     end
     
     # Convert to f(t|v,B,w)
-    density = p * exp(-v * B * w - (v^2) * t / 2) / (B^2)
-    return max(density, 0.0)  # ensure non-negative density (occasionaly generates neg values e.g., -1e-21)
+    density = p * exp(-v * B * w - (v^2) * (t - τ) / 2) / (B^2)
+    return max(density, 1e-12)  # ensure non-negative density (occasionaly generates neg values e.g., -1e-21) (maybe return +ϵ instead?)
 end
 
 """
@@ -93,7 +95,7 @@ end
 Generate a single trial of a drift diffusion model using the Euler-Maruyama method.
 """
 function simulateDDM(model::DriftDiffusionModel, dt::Float64=1e-5, rng::AbstractRNG=Random.default_rng())
-    @unpack B, v, a₀, σ = model
+    @unpack B, v, a₀, τ, σ = model
 
     # initialize variables
     t = 0.0
@@ -101,8 +103,12 @@ function simulateDDM(model::DriftDiffusionModel, dt::Float64=1e-5, rng::Abstract
 
     while a < B && a > 0
         # run the model forward in time
-        a += v * dt + (σ * sqrt(dt) * randn(rng))
-        t += dt
+        if t < τ
+            t += dt
+        else
+            a += v * dt + (σ * sqrt(dt) * randn(rng))
+            t += dt
+        end
     end
 
     if a >= B
@@ -144,26 +150,26 @@ DensityInterface.DensityKind(::DriftDiffusionModel) = HasDensity()
 Calculate the loglikelihood of a drift diffusion model given a DDMResult.
 """
 function DensityInterface.logdensityof(model::DriftDiffusionModel, x::DDMResult)
-    @unpack B, v, a₀, σ = model
+    @unpack B, v, a₀, τ, σ = model
     @unpack rt, choice = x
     
-    return logdensityof(B, v, a₀, σ, rt, choice)
+    return logdensityof(B, v, a₀, τ, σ, rt, choice)
 end
 
-function logdensityof(B::TB, v::TV, a₀::TA, σ::TS, rt::Float64, choice::Int) where {TB<:Real, TV<:Real, TA<:Real, TS<:Real}
+function logdensityof(B::TB, v::TV, a₀::TA, τ::TT, σ::TS, rt::Float64, choice::Int) where {TB<:Real, TV<:Real, TA<:Real, TT<:Real, TS<:Real}
     if rt <= 0
         return -Inf
     end
 
-    T = promote_type(TB, TV, TA, TS)
-    B, v, a₀, σ = T(B), T(v), T(a₀), T(σ)
+    T = promote_type(TB, TV, TA, TT, TS)
+    B, v, a₀, τ, σ = T(B), T(v), T(a₀), T(τ), T(σ)
 
     # determine which version of the wpft to use: upper or lower boundary
     v, w = choice == 1 ? -v : v, choice == 1 ? 1 - a₀ : a₀
 
 
     # calculate the Wiener first passage time density
-    density = wfpt(rt, v, B, w)
+    density = wfpt(rt, v, B, w, τ)
     logdens = log(density)
 
     # check if density is Inf (i.e., log(0)) and return a very large value if so
@@ -181,12 +187,12 @@ end
 Perform parameter estimation of a drift diffusion model using MLE given a vector of DDM observtions. Takes an optional weights vector to support for use in an HMM.
 """
 function StatsAPI.fit!(model::DriftDiffusionModel, x::Vector{DDMResult}, w::AbstractVector{<:Real}=ones(length(x)))
-    @unpack B, v, a₀, σ = model
+    @unpack B, v, a₀, τ, σ = model
     
     # Define negative log-likelihood function for optimization
     function neg_log_likelihood(params)
         # We optimize B, drift rate, and a₀ as a fraction of B
-        B_temp, v_temp, a₀_temp = params
+        B_temp, v_temp, τ_temp = params
         
         # Early return for invalid boundary (must be positive)
         if B_temp < 0
@@ -196,7 +202,7 @@ function StatsAPI.fit!(model::DriftDiffusionModel, x::Vector{DDMResult}, w::Abst
         # Calculate log-likelihood using the raw parameters version
         ll = 0.0
         for i in 1:length(x)
-            ll += w[i] * logdensityof(B_temp, v_temp, a₀_temp, σ, x[i].rt, x[i].choice)
+            ll += w[i] * logdensityof(B_temp, v_temp, a₀, τ_temp, σ, x[i].rt, x[i].choice)
         end
         
         # Return negative since optimizers typically minimize
@@ -204,11 +210,11 @@ function StatsAPI.fit!(model::DriftDiffusionModel, x::Vector{DDMResult}, w::Abst
     end
     
     # Set up optimization
-    initial_params = [B, v, a₀]
+    initial_params = [B, v, τ]
     
     # Add bounds - a₀_frac must be between -1 and 1
     lower_bounds = [0.001, -Inf, 1e-3]
-    upper_bounds = [Inf, Inf, 1-1e-3]
+    upper_bounds = [50.0, 10.0, 5.0]
     
     # Optimize using L-BFGS-B to respect the bounds
     result = optimize(neg_log_likelihood, lower_bounds, upper_bounds, initial_params, Fminbox(LBFGS()), autodiff=:forward)
@@ -219,7 +225,8 @@ function StatsAPI.fit!(model::DriftDiffusionModel, x::Vector{DDMResult}, w::Abst
     # Update the model with new parameter estimates
     model.B = optimal_params[1]
     model.v = optimal_params[2]
-    model.a₀ = optimal_params[3]
+    # model.a₀ = optimal_params[3]
+    model.τ = optimal_params[3]
     
     return model
 end
