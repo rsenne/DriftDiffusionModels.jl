@@ -9,10 +9,11 @@ function randomDDM()
     v = rand(Uniform(1e-3, 9.0))
     
     # Generate a₀ as a fraction of B to ensure proper bounds
-    a₀ = rand(Uniform(0.1, 0.9))  # Keep a₀ within boundary
+    a₀ = 0.5 # rand(Uniform(0.1, 0.9))  # Keep a₀ within boundary
+    τ = rand(Uniform(1e-3, 1.0))
     
     σ = 1.0 # fixed for identifiability
-    return DriftDiffusionModel(B, v, a₀, σ)
+    return DriftDiffusionModel(B, v, a₀, τ, σ)
 end
 
 """

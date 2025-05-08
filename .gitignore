@@ -3,3 +3,4 @@ Manifest.toml
 data/flashes_df_cleaned.csv
 data/mouse_df.csv
 *.csv
+data

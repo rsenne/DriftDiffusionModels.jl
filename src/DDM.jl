@@ -46,7 +46,7 @@ This implementation follows the algorithm described in Navarro & Fuss (2009).
 function wfpt(t::Real, v::Real, B::Real, w::Real, τ::Real, err::Real=1e-12)
     # Check for valid inputs
     if t <= τ
-        return 0.0
+        return 1e-12 # return a small (but nonzero) value for invalid t
     end
     
     # Use normalized time and relative start point
