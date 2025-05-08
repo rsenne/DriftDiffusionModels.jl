@@ -20,6 +20,6 @@ include("DDM.jl")
 include("HMMDDM.jl")
 include("Utilities.jl")
 
-export DriftDiffusionModel, DDMResult, rand, logdensityof, fit!, crossvalidate, PriorHMM, simulateDDM, wfpt
+export DriftDiffusionModel, DDMResult, rand, logdensityof, fit!, crossvalidate, PriorHMM, simulateDDM, wfpt, randomDDM
 
 end
