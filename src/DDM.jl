@@ -43,10 +43,11 @@ with drift rate v, boundary separation B, starting point α₀, non-decision tim
 
 This implementation follows the algorithm described in Navarro & Fuss (2009).
 """
-function wfpt(t::Real, v::Real, B::Real, w::Real, τ::Real, err::Real=1e-12)
-    # Check for valid inputs
-    if t <= τ
-        return 1e-12 # return a small (but nonzero) value for invalid t
+function wfpt(t::TB, v::TV, B::TA, w::TT, τ::TS; err::Float64=1e-12
+) where {TB<:Real, TV<:Real, TA<:Real, TT<:Real, TS<:Real}
+    # Check for valid inputs (pass t = 0 for sigmoid later)
+    if t < τ
+        return 0
     end
     
     # Use normalized time and relative start point
@@ -156,7 +157,9 @@ function DensityInterface.logdensityof(model::DriftDiffusionModel, x::DDMResult)
     return logdensityof(B, v, a₀, τ, σ, rt, choice)
 end
 
-function logdensityof(B::TB, v::TV, a₀::TA, τ::TT, σ::TS, rt::Float64, choice::Int) where {TB<:Real, TV<:Real, TA<:Real, TT<:Real, TS<:Real}
+function logdensityof(
+    B::TB, v::TV, a₀::TA, τ::TT, σ::TS, rt::Float64, choice::Int; 
+) where {TB<:Real, TV<:Real, TA<:Real, TT<:Real, TS<:Real}
     if rt <= 0
         return -Inf
     end
@@ -173,11 +176,7 @@ function logdensityof(B::TB, v::TV, a₀::TA, τ::TT, σ::TS, rt::Float64, choic
     logdens = log(density)
 
     # check if density is Inf (i.e., log(0)) and return a very large value if so
-    if isinf(logdens)
-        return -1e16
-    end
-
-    return logdens
+    return isinf(logdens) ? -1e16 : logdens
 end
 
 
