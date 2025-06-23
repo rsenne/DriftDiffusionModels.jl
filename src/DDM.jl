@@ -3,7 +3,9 @@
 
 Implement a simple drift diffusion model: da/dt = v + σdW.
 """
-mutable struct DriftDiffusionModel
+abstract type EmissionModel end
+
+mutable struct DriftDiffusionModel <: EmissionModel
     B::Float64 # Boundary Separation
     v::Float64 # Drift Rate
     a₀::Float64 # Initial Accumulation: parameterized as a fraction of B
@@ -21,6 +23,13 @@ function DriftDiffusionModel(;
     return DriftDiffusionModel(B, v, a₀, τ, σ)
 end
 
+mutable struct UniformEmission <: EmissionModel
+    a::Float64
+    b::Float64 
+end
+
+abstract type AbstractResult end
+
 """
     DDMResult
 
@@ -34,6 +43,13 @@ end
 function DDMResult(;rt::Float64, choice::Int)
     return DDMResult(rt, choice)
 end
+
+function UniformResult(;rt::Float64, choice::Int)
+    return DDMResult(rt, choice)
+end
+
+Base.eltype(::DriftDiffusionModel) = DDMResult
+Base.eltype(::UniformEmission) = DDMResult
 
 """
     wfpt(t, v, B, z, τ, err=1e-8)
@@ -133,6 +149,15 @@ function simulateDDM(model::DriftDiffusionModel, n::Int, dt::Float64=1e-5)
 end
 
 """
+Uniform rand function 
+"""
+function Random.rand(rng::AbstractRNG, model::UniformEmission)
+    rt = rand(rng, Uniform(model.a, model.b))      
+    choice = rand(rng, Bool) ? 1 : -1                   
+    return UniformResult(rt=rt, choice=choice)
+end
+
+"""
     Random.rand(rng::AbstractRNG, model::DriftDiffusionModel)
 
 Generate a single trial of the drift diffusion model using the Euler-Maruyama method--needed for HiddenMarkovModels.jl
@@ -144,6 +169,7 @@ end
 
 # Tell Density Interface that DDMResult is a distribution
 DensityInterface.DensityKind(::DriftDiffusionModel) = HasDensity()
+DensityInterface.DensityKind(::UniformEmission) = HasDensity()
 
 """
     DensityInterface.logdensityof(model::DriftDiffusionModel, x::DDMResult)
@@ -179,6 +205,28 @@ function logdensityof(
     return isinf(logdens) ? -1e16 : logdens
 end
 
+
+function DensityInterface.logdensityof(model::UniformEmission, x::DDMResult)
+    return logdensityof(model, x.rt)
+end
+
+function logdensityof(model::UniformEmission, rt::Float64)
+    if model.a <= rt <= model.b
+        width = model.b - model.a
+        return width > 0 ? -log(width) : -1e16
+    else
+        return -Inf
+    end
+end
+
+"""
+Fallbacks for HMM 
+"""
+penalty = -1e6
+
+function logdensityof(model::DriftDiffusionModel, x::AbstractResult)
+    return x isa DDMResult ? DensityInterface.logdensityof(model, x) : penalty
+end
 
 """
     StatsAPI.fit!(model::DriftDiffusionModel, x::Vector{DDMResult}, w::Vector{Float64}=ones(length(x)))
@@ -230,4 +278,33 @@ function StatsAPI.fit!(model::DriftDiffusionModel, x::Vector{DDMResult}, w::Abst
     return model
 end
 
+function StatsAPI.fit!(model::DriftDiffusionModel, x::Vector{Any}, w::AbstractVector{<:Real})
+    x_ddm = DDMResult[]
+    w_ddm = Float64[]
+    for (xi, wi) in zip(x, w)
+        if xi isa DDMResult
+            push!(x_ddm, xi)
+            push!(w_ddm, wi)
+        end
+    end
+    return fit!(model, x_ddm, w_ddm)
+end
+
+function StatsAPI.fit!(model::UniformEmission, x::Vector{UniformResult}, w::AbstractVector{<:Real})
+    # Compute weighted min and max RTs
+    rts = getfield.(x, :rt)
+    weighted_mean = sum(w .* rts) / sum(w)
+    weighted_std = sqrt(sum(w .* (rts .- weighted_mean).^2) / sum(w))
+
+    # Update model bounds (safely)
+    model.a = minimum(rts) - 0.05 * weighted_std
+    model.b = maximum(rts) + 0.05 * weighted_std
+    return model
+end
+
+function StatsAPI.fit!(model::UniformEmission, x::Vector{Any}, w::AbstractVector{<:Real})
+    x_filtered = filter(xi -> xi isa UniformResult, x)
+    x_cast = UniformResult[xi for xi in x_filtered]
+    return fit!(model, x_cast, w[1:length(x_cast)])
+end
     
