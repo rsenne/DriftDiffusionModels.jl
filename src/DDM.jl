@@ -33,6 +33,21 @@ function ExponentialEmission(;
     return ExponentialEmission(λ)
 end
 
+mutable struct ScaledBetaEmission <: EmissionModel 
+    α::Float64
+    β::Float64
+    a::Float64
+    b::Float64
+end 
+
+function ScaledBetaEmission(; 
+    α::Float64, 
+    β::Float64, 
+    a::Float64, 
+    b::Float64, 
+)
+    return ScaledBetaEmission(α, β, a, b)
+end 
 abstract type AbstractResult end
 
 """
@@ -160,9 +175,75 @@ function Random.rand(rng::AbstractRNG, model::DriftDiffusionModel)
     return simulateDDM(model, 1e-6, rng)
 end
 
+"""
+Generate a single random exponential 
+"""
+function Random.rand(rng::AbstractRNG, model::ExponentialEmission)
+    rt = rand(rng, Exponential(model.λ))
+    choice = rand(rng, (-1, 1)) 
+    return DDMResult(rt, choice)
+end
+
+"""
+Scaled beta rand function 
+"""
+function Random.rand(rng::AbstractRNG, model::ScaledBetaEmission)
+    z = rand(rng, Beta(model.α, model.β))
+    
+    rt = model.a + z * (model.b - model.a)
+    
+    choice = rand(rng, (-1, 1))
+    
+    return DDMResult(rt, choice)
+end
+
+"""
+Edited rand function from HiddenMarkovModels.jl because vector{Any}
+"""
+function Random.rand(rng::AbstractRNG, hmm::AbstractHMM, control_seq::AbstractVector)
+    T = length(control_seq)
+    dummy_log_probas = fill(-Inf, length(hmm))
+
+    init = initialization(hmm)
+    state_seq = Vector{Int}(undef, T)
+    state1 = rand(rng, HiddenMarkovModels.LightCategorical(init, dummy_log_probas))
+    state_seq[1] = state1
+
+    @views for t in 1:(T - 1)
+        trans = transition_matrix(hmm, control_seq[t + 1])
+        state_seq[t + 1] = rand(
+            rng, HiddenMarkovModels.LightCategorical(trans[state_seq[t], :], dummy_log_probas)
+        )
+    end
+
+    dists1 = HiddenMarkovModels.obs_distributions(hmm, control_seq[1])
+    obs1 = rand(rng, dists1[state1])
+    obs_seq = Vector{AbstractResult}(undef, T)
+    obs_seq[1] = obs1
+
+    for t in 2:T
+        dists = HiddenMarkovModels.obs_distributions(hmm, control_seq[t])
+        obs_seq[t] = rand(rng, dists[state_seq[t]])
+    end
+    return (; state_seq=state_seq, obs_seq=obs_seq)
+end
+
+function Random.rand(hmm::AbstractHMM, control_seq::AbstractVector)
+    return rand(default_rng(), hmm, control_seq)
+end
+
+function Random.rand(rng::AbstractRNG, hmm::AbstractHMM, T::Integer)
+    return rand(rng, hmm, Fill(nothing, T))
+end
+
+function Random.rand(hmm::AbstractHMM, T::Integer)
+    return rand(hmm, Fill(nothing, T))
+end
+
+
 DensityInterface.DensityKind(::DriftDiffusionModel) = HasDensity()
 DensityInterface.DensityKind(::ExponentialEmission) = HasDensity()
-
+DensityInterface.DensityKind(::ScaledBetaEmission) = HasDensity()
 """
     DensityInterface.logdensityof(model::DriftDiffusionModel, x::DDMResult)
 
@@ -210,6 +291,18 @@ function DensityInterface.logdensityof(model::ExponentialEmission, x::AbstractRe
     else
         return log(λ) - λ * rt
     end
+end
+
+"""
+log density of Scaled Beta result 
+"""
+function DensityInterface.logdensityof(model::ScaledBetaEmission, x::AbstractResult)
+    rt = x.rt
+    if rt < model.a || rt > model.b
+        return -1e6
+    end
+    z = (rt - model.a) / (model.b - model.a)
+    return logpdf(Beta(model.α, model.β), z) - log(model.b - model.a)
 end
 
 
@@ -285,3 +378,26 @@ function StatsAPI.fit!(
 
     return model
 end
+
+"""
+Scaled Beta fit function 
+"""
+function StatsAPI.fit!(
+    model::ScaledBetaEmission, 
+    x::Vector{<:AbstractResult}, 
+    w::AbstractVector{<:Real}=ones(length(x)), 
+)
+    rts = [r.rt for r in x]
+    rts_scaled = (rts .- model.a) ./ (model.b - model.a)
+    total_w = sum(w)
+    μ̂ = sum(w .* rts_scaled) / total_w
+    σ²̂ = sum(w .* (rts_scaled .- μ̂).^2) / total_w
+
+    common = μ̂ * (1 - μ̂) / σ²̂ - 1
+    α̂ = μ̂ * common
+    β̂ = (1 - μ̂) * common
+
+    model.α = α̂
+    model.β = β̂
+    return model
+end 

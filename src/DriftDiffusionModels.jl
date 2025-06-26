@@ -23,7 +23,7 @@ include("DDM.jl")
 include("HMMDDM.jl")
 include("Utilities.jl")
 
-export EmissionModel, ExponentialEmission, DriftDiffusionModel, DDMResult, AbstractResult 
+export EmissionModel, ScaledBetaEmission, ExponentialEmission, DriftDiffusionModel, DDMResult, AbstractResult 
 export rand, logdensityof, fit!, crossvalidate, PriorHMM, simulateDDM, wfpt, randomDDM
 
 end
