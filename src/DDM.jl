@@ -23,31 +23,16 @@ function DriftDiffusionModel(;
     return DriftDiffusionModel(B, v, a₀, τ, σ)
 end
 
-mutable struct ExponentialEmission <: EmissionModel
-    λ::Float64 
-end
-
-function ExponentialEmission(;
-    λ::Float64   
-)
-    return ExponentialEmission(λ)
-end
-
-mutable struct ScaledBetaEmission <: EmissionModel 
-    α::Float64
-    β::Float64
-    a::Float64
+mutable struct UniformEmission <: EmissionModel
     b::Float64
-end 
+end
 
-function ScaledBetaEmission(; 
-    α::Float64, 
-    β::Float64, 
-    a::Float64, 
-    b::Float64, 
+function UniformEmission(;
+    b::Float64
 )
-    return ScaledBetaEmission(α, β, a, b)
-end 
+    return UniformEmission(b)
+end
+
 abstract type AbstractResult end
 
 """
@@ -65,6 +50,7 @@ function DDMResult(;rt::Float64, choice::Int)
 end
 
 Base.eltype(::DriftDiffusionModel) = DDMResult
+Base.eltype(::UniformEmission) = DDMResult
 
 """
     wfpt(t, v, B, z, τ, err=1e-8)
@@ -176,24 +162,11 @@ function Random.rand(rng::AbstractRNG, model::DriftDiffusionModel)
 end
 
 """
-Generate a single random exponential 
+Generate a single random Uniform emission 
 """
-function Random.rand(rng::AbstractRNG, model::ExponentialEmission)
-    rt = rand(rng, Exponential(model.λ))
-    choice = rand(rng, (-1, 1)) 
-    return DDMResult(rt, choice)
-end
-
-"""
-Scaled beta rand function 
-"""
-function Random.rand(rng::AbstractRNG, model::ScaledBetaEmission)
-    z = rand(rng, Beta(model.α, model.β))
-    
-    rt = model.a + z * (model.b - model.a)
-    
+function Random.rand(rng::AbstractRNG, model::UniformEmission)
+    rt = rand(rng, Uniform(0, model.b))
     choice = rand(rng, (-1, 1))
-    
     return DDMResult(rt, choice)
 end
 
@@ -242,8 +215,8 @@ end
 
 
 DensityInterface.DensityKind(::DriftDiffusionModel) = HasDensity()
-DensityInterface.DensityKind(::ExponentialEmission) = HasDensity()
-DensityInterface.DensityKind(::ScaledBetaEmission) = HasDensity()
+DensityInterface.DensityKind(::UniformEmission) = HasDensity()
+
 """
     DensityInterface.logdensityof(model::DriftDiffusionModel, x::DDMResult)
 
@@ -279,32 +252,20 @@ function logdensityof(
 end
 
 """
-    DensityInterface.logdensityof(model::ExponentialEmission, x::AbstractResult)
+    DensityInterface.logdensityof(model::UniformEmission, x::AbstractResult)
 
-Calculate log density of Exponential Result
+Calculate log density of Uniform Result
 """
-function DensityInterface.logdensityof(model::ExponentialEmission, x::AbstractResult)
+function DensityInterface.logdensityof(model::UniformEmission, x::AbstractResult)
     rt = x.rt
-    λ = model.λ
-    if rt < 0 || λ <= 0
-        return -1e6  
-    else
-        return log(λ) - λ * rt
-    end
-end
+    b = model.b
 
-"""
-log density of Scaled Beta result 
-"""
-function DensityInterface.logdensityof(model::ScaledBetaEmission, x::AbstractResult)
-    rt = x.rt
-    if rt < model.a || rt > model.b
+    if !isfinite(rt) || !isfinite(b) || b <= 0 || rt < 0 || rt > b
         return -1e6
     end
-    z = (rt - model.a) / (model.b - model.a)
-    return logpdf(Beta(model.α, model.β), z) - log(model.b - model.a)
-end
 
+    return -log(b)
+end
 
 """
     StatsAPI.fit!(model::DriftDiffusionModel, x::Vector{DDMResult}, w::Vector{Float64}=ones(length(x)))
@@ -318,6 +279,10 @@ function StatsAPI.fit!(model::DriftDiffusionModel, x::Vector{<:AbstractResult}, 
     function neg_log_likelihood(params)
         # We optimize B, drift rate, and a₀ as a fraction of B
         B_temp, v_temp, τ_temp = params
+
+        if !isfinite(B_temp) || !isfinite(v_temp) || !isfinite(τ_temp) || B_temp <= 0 || τ_temp <= 0
+            return 1e12
+        end
         
         # Early return for invalid boundary (must be positive)
         if B_temp < 0
@@ -327,11 +292,15 @@ function StatsAPI.fit!(model::DriftDiffusionModel, x::Vector{<:AbstractResult}, 
         # Calculate log-likelihood using the raw parameters version
         ll = 0.0
         for i in 1:length(x)
-            ll += w[i] * logdensityof(B_temp, v_temp, a₀, τ_temp, σ, x[i].rt, x[i].choice)
+            logp = logdensityof(B_temp, v_temp, a₀, τ_temp, σ, x[i].rt, x[i].choice)
+            if !isfinite(logp)
+                return 1e12
+            end
+            ll += w[i] * logp
         end
         
         # Return negative since optimizers typically minimize
-        return -ll
+        return -ll / length(x)
     end
     
     # Set up optimization
@@ -340,64 +309,55 @@ function StatsAPI.fit!(model::DriftDiffusionModel, x::Vector{<:AbstractResult}, 
     # Add bounds - a₀_frac must be between -1 and 1
     lower_bounds = [0.001, -Inf, 1e-3]
     upper_bounds = [50.0, 10.0, 5.0]
+
+    grad = ForwardDiff.gradient(neg_log_likelihood, initial_params)
+    @assert all(isfinite, grad) "Non-finite gradient detected"
     
     # Optimize using L-BFGS-B to respect the bounds
     result = optimize(neg_log_likelihood, lower_bounds, upper_bounds, initial_params, Fminbox(LBFGS()), autodiff=:forward)
     
     # Extract the optimized parameters
     optimal_params = Optim.minimizer(result)
-    
+
     # Update the model with new parameter estimates
     model.B = optimal_params[1]
     model.v = optimal_params[2]
     # model.a₀ = optimal_params[3]
     model.τ = optimal_params[3]
+
+    pushτ!(model.τ) 
     
     return model
 end
 
 """
-Exponential Fit function 
+Uniform Emission fit 
 """
 function StatsAPI.fit!(
-    model::ExponentialEmission, 
+    model::UniformEmission, 
     x::Vector{<:AbstractResult}, 
     w::AbstractVector{<:Real}=ones(length(x)), 
-)
-    rts = getfield.(x, :rt)
+)  
+    cache = TAU_CACHE[]
 
-    # weighted MLE of Exponential from StackExchange 
-    numerator = sum(w)
-    denominator = sum(w .* rts)
+    if isempty(cache)
+        @warn "UniformEmission fit skipped"
+        return model
+    end 
 
-    if denominator <= 0
-        model.λ = 1e-6 
-    else
-        model.λ = numerator / denominator
-    end
-
+    model.b = minimum(cache)
     return model
 end
 
 """
-Scaled Beta fit function 
+cache for Taus
 """
-function StatsAPI.fit!(
-    model::ScaledBetaEmission, 
-    x::Vector{<:AbstractResult}, 
-    w::AbstractVector{<:Real}=ones(length(x)), 
-)
-    rts = [r.rt for r in x]
-    rts_scaled = (rts .- model.a) ./ (model.b - model.a)
-    total_w = sum(w)
-    μ̂ = sum(w .* rts_scaled) / total_w
-    σ²̂ = sum(w .* (rts_scaled .- μ̂).^2) / total_w
+function pushτ!(τ::Float64)
+    cache = TAU_CACHE[]
+    if length(cache) == 3
+        popfirst!(cache) 
+    end
+    push!(cache, τ)
+end
 
-    common = μ̂ * (1 - μ̂) / σ²̂ - 1
-    α̂ = μ̂ * common
-    β̂ = (1 - μ̂) * common
-
-    model.α = α̂
-    model.β = β̂
-    return model
-end 
+TAU_CACHE = Ref(Vector{Float64}())

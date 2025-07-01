@@ -133,9 +133,13 @@ function StatsAPI.fit!(hmm::PriorHMM,
         init_counts  .+= fb.γ[:, t1]
         trans_counts .+= sum(fb.ξ[t1:t2])
     end
+    ϵ = 1e-8
 
-    hmm.init  .= init_counts ./ sum(init_counts)
-    hmm.trans .= trans_counts ./ sum(trans_counts; dims = 2)
+    hmm.init .= init_counts .+ ϵ
+    hmm.init ./= sum(hmm.init)
+
+    hmm.trans .= trans_counts .+ ϵ
+    hmm.trans ./= sum(hmm.trans; dims = 2)
 
     # update each emission model using state marginals γ
     for i in 1:K
