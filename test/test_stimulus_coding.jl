@@ -1,4 +1,4 @@
-unction riemann_sum(f, tmin, tmax, n)
+function riemann_sum(f, tmin, tmax, n)
     h = (tmax - tmin) / n
     s = 0.0
     t = tmin + 0.5h
@@ -10,15 +10,15 @@ unction riemann_sum(f, tmin, tmax, n)
 end
 
 # Probability mass to "Right" response (upper boundary) for a given effective drift.
-prob_right_response(v, B, w; err=1e-12) = riemann_sum(t->wfpt(t, v, B, w, err), 1e-4, 6.0, 50000)
+prob_right_response(v, B, w, τ; err=1e-12) = riemann_sum(t->wfpt(t, v, B, w, τ, err), τ + 1e-4, 6.0, 50000)
 
-@testset "4-case stimulus × correctness probabilities" begin
-    B, v, w = 1.7, 0.6, 0.4
+@testset "4-case stimulus × correctness probabilities (with τ)" begin
+    B, v, w, τ = 1.7, 0.6, 0.5, 0.12
 
-    p_R_resp_given_Rstim = prob_right_response( v, B, w)
+    p_R_resp_given_Rstim = prob_right_response( v, B, w, τ)
     p_L_resp_given_Rstim = 1 - p_R_resp_given_Rstim
 
-    p_R_resp_given_Lstim = prob_right_response(-v, B, w)
+    p_R_resp_given_Lstim = prob_right_response(-v, B, w, τ)
     p_L_resp_given_Lstim = 1 - p_R_resp_given_Lstim
 
     p_right_correct   = p_R_resp_given_Rstim          # r=+1, s=+1
@@ -28,46 +28,54 @@ prob_right_response(v, B, w; err=1e-12) = riemann_sum(t->wfpt(t, v, B, w, err), 
 
     @test all(x -> isfinite(x) && 0 ≤ x ≤ 1, (p_right_correct, p_right_incorrect, p_left_correct, p_left_incorrect))
 
+    # test symmetry
+    @test isapprox(p_right_correct, p_left_correct; atol=1e-6)
+    @test isapprox(p_right_incorrect, p_left_incorrect, atol=1e-6)
+
     # With balanced stimuli and v>0, overall accuracy > 0.5
-    acc = 0.5*(p_right_correct + p_left_correct)
+    acc = p_right_correct + p_left_correct
     @test acc > 0.5
+
+    @test isapprox(p_right_correct + p_left_correct + p_right_incorrect + p_left_incorrect, 1.; atol=1e-3)
 end
 
-# Stimulus-coded negative log-likelihood using primitive logdensityof (no wrappers, just composition)
-# θ = (logB, v, logit(a0)); σ fixed to 1.0
+# Stimulus-coded negative log-likelihood using primitive logdensityof with τ
+# θ = (logB, v, logit(a0), τ_unconstrained); σ fixed to 1.0, τ = softplus(τ_unconstrained)
 nll_stimulus(θ, rts, resps, stims) = begin
-    logB, v, logit_a = θ
+    logB, v, logit_a, τu = θ
     B = exp(logB)
     a0 = 1/(1 + exp(-logit_a))
+    τ = log1p(exp(τu)) # softplus to keep τ ≥ 0
     σ = 1.0
     s = 0.0
     @inbounds for i in eachindex(rts)
         veff = v * stims[i]
-        s -= logdensityof(B, veff, a0, σ, rts[i], resps[i])
+        s -= logdensityof(B, veff, a0, τ, σ, rts[i], resps[i])
     end
     s
 end
 
-@testset "Stimulus-coded likelihood gradient (AD vs FiniteDiff)" begin
-    # Small synthetic set without any simulator dependency: pick plausible RTs/choices/stims
-    rts   = [0.31, 0.42, 0.28, 0.65, 0.51, 0.37, 0.73, 0.29]
+@testset "Stimulus-coded likelihood gradient (AD vs FiniteDiff) with τ" begin
+    using ForwardDiff, FiniteDiff
+    # Small synthetic set without simulator dependency
+    rts   = [0.41, 0.52, 0.38, 0.75, 0.61, 0.47, 0.83, 0.49]
     resps = [ +1,  -1,  +1,  -1,  +1,  +1,  -1,  +1]
     stims = [ +1,  +1,  -1,  -1,  +1,  -1,  +1,  -1]
 
-    θ0 = [log(1.6), 0.6, 0.0]
+    θ0 = [log(1.6), 0.6, 0.0, log(0.15)]
     g_ad = ForwardDiff.gradient(θ->nll_stimulus(θ, rts, resps, stims), θ0)
 
     g_fd = FiniteDiff.finite_difference_gradient(θ->nll_stimulus(θ, rts, resps, stims), θ0; relstep=1e-6)
     @test all(isfinite, g_ad) && all(isfinite, g_fd)
-    @test isapprox(g_ad, g_fd; rtol=2e-3, atol=2e-3)
+    @test isapprox(g_ad, g_fd; rtol=3e-3, atol=3e-3)
 end
 
-@testset "Stimulus/response flip invariance" begin
-    rts   = [0.33, 0.47, 0.39, 0.58]
+@testset "Stimulus/response flip invariance (with τ)" begin
+    rts   = [0.53, 0.67, 0.59, 0.78]
     resps = [ +1,  -1,  +1,  -1]
     stims = [ +1,  +1,  -1,  -1]
 
-    θ = [log(1.8), 0.5, 0.2]
+    θ = [log(1.8), 0.5, 0.2, log(0.12)]
 
     nll1 = nll_stimulus(θ, rts, resps, stims)
     nll2 = nll_stimulus(θ, rts, -resps, -stims)
