@@ -5,3 +5,5 @@ data/mouse_df.csv
 *.csv
 data
 random.jl
+*.png
+*.svg
