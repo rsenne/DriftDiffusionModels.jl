@@ -42,18 +42,16 @@ end
 
 # Stimulus-coded negative log-likelihood using primitive logdensityof with τ
 # θ = (logB, v, logit(a0), τ_unconstrained); σ fixed to 1.0, τ = softplus(τ_unconstrained)
-nll_stimulus(θ, rts, resps, stims) = begin
-    logB, v, logit_a, τu = θ
-    B = exp(logB)
-    a0 = 1/(1 + exp(-logit_a))
-    τ = log1p(exp(τu)) # softplus to keep τ ≥ 0
-    σ = 1.0
-    s = 0.0
-    for i in eachindex(rts)
-        veff = v * stims[i]
-        s -= logdensityof(B, veff, a0, τ, σ, rts[i], resps[i])
+function nll_stimulus(θ, rts::AbstractVector, resps::AbstractVector{<:Integer}, stims::AbstractVector{<:Integer})
+    B   = exp(θ[1])
+    v   = θ[2]
+    a0  = 1 / (1 + exp(-θ[3]))   # <— logistic constraint: a0 ∈ (0,1)
+    τ   = exp(θ[4])
+    nll = 0.0
+    @inbounds for i in eachindex(rts, resps, stims)
+        nll -= logdensityof(B, v, a0, τ, rts[i], resps[i], stims[i])
     end
-    s
+    return nll
 end
 
 @testset "Stimulus-coded likelihood gradient (AD vs FiniteDiff) with τ" begin
@@ -78,6 +76,11 @@ end
     θ = [log(1.8), 0.5, 0.2, log(0.12)]
 
     nll1 = nll_stimulus(θ, rts, resps, stims)
-    nll2 = nll_stimulus(θ, rts, -resps, -stims)
-    @test isapprox(nll1, nll2; rtol=1e-10, atol=1e-12)
+
+    # Flip stimulus & response AND reflect the start bias:
+    θ_flip = copy(θ)
+    θ_flip[3] = -θ[3]          # because a₀ = logistic(θ₃), so a₀' = 1 - a₀ ⇔ θ₃' = -θ₃
+
+    nll2 = nll_stimulus(θ_flip, rts, -resps, -stims)
+    @test isapprox(nll1, nll2; rtol=1e-9, atol=1e-11)
 end

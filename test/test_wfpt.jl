@@ -27,11 +27,13 @@ end
     @test 0.99 ≤ mass ≤ 1.01
 end
 
-@testset "logdensity basic invariants (module API with τ)" begin
-    B, v, a0, τ, σ = 2.5, 0.7, 0.25, 0.15, 1.0
-    ll = logdensityof(B, v, a0, τ, σ, 0.350, +1) + logdensityof(B, v, a0, τ, σ, 0.420, -1)
+@testset "logdensity basic invariants (module API with τ, stimulus-aware)" begin
+    B, v, a0, τ = 2.5, 0.7, 0.25, 0.15
+    # Example trials with explicit stimulus (s = ±1)
+    ll = logdensityof(B, v, a0, τ, 0.350, +1, +1) + logdensityof(B, v, a0, τ, 0.420, -1, +1)
     @test isfinite(ll)
-    @test logdensityof(B, v, a0, τ, σ, -0.1, +1) == -Inf
-    # rt <= τ should also not contribute meaningful density; the implementation returns small floor
+    @test logdensityof(B, v, a0, τ, -0.1, +1, +1) == -Inf
+    # rt <= τ should still return small floor in wfpt:
+    v, B, a0 = 0.5, 2.0, 0.3
     @test wfpt(τ - 1e-3, v, B, a0, τ) ≥ 0
 end
