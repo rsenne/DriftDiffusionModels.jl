@@ -228,19 +228,16 @@ function StatsAPI.fit!(model::DriftDiffusionModel, x::Vector{DDMResult}, w::Abst
         # Return negative since optimizers typically minimize
         return -ll
     end
-
-    # Get mininum overall RT to set upper bound on non-decision time
-    min_rt = minimum(r.rt for r in x)
     
     # Set up optimization
     initial_params = [B, v, a₀, τ]
     
     # Add bounds - a₀_frac must be between -1 and 1
     lower_bounds = [0.001, 0, 0, 1e-3]
-    upper_bounds = [50.0, 10.0, 1.0, min_rt-1e-3]
+    upper_bounds = [50.0, 10.0, 1.0, 5.0]
 
     # Optimize using L-BFGS-B to respect the bounds
-    result = optimize(neg_log_likelihood, lower_bounds, upper_bounds, initial_params, Fminbox(LBFGS()), autodiff=:forward)
+    result = optimize(neg_log_likelihood, lower_bounds, upper_bounds, initial_params, Fminbox(LBFGS(linesearch=Optim.LineSearches.BackTracking())), autodiff=:forward)
 
     # Extract the optimized parameters
     optimal_params = Optim.minimizer(result)
