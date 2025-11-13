@@ -42,7 +42,7 @@ with drift rate v, boundary separation B, starting point α₀, non-decision tim
 
 This implementation follows the algorithm described in Navarro & Fuss (2009).
 """
-function wfpt(t::Real, v::Real, B::Real, w::Real, τ::Real, err::Real=1e-12)
+function wfpt(t::Real, v::Real, B::Real, w::Real, τ::Real, err::Real=1e-8)
     # Check for valid inputs
     if t <= τ
         return 0.0

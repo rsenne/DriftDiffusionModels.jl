@@ -1,7 +1,7 @@
 name = "DriftDiffusionModels"
 uuid = "fd42b4bb-98ff-4b36-9e51-f407bd71120d"
-authors = "[Ryan Senne <rsenne@bu.edu>]"
 version = "0.0.1"
+authors = "[Ryan Senne <rsenne@bu.edu>]"
 
 [deps]
 DensityInterface = "b429d917-457f-4dbc-8f4c-0cc954292b1d"

@@ -7,3 +7,6 @@ data
 random.jl
 *.png
 *.svg
+testing.jl
+/notebooks/random_files
+/figures
