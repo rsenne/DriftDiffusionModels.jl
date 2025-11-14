@@ -13,7 +13,6 @@
 * Log-likelihood and parameter estimation for DDMs via MLE
 * Hidden Markov Models with DDM emissions and Dirichlet priors
 * Baum–Welch (EM) training with MAP updates
-* Cross-validation for model selection and evaluation
 
 ---
 
@@ -35,29 +34,29 @@ using .DriftDiffusionModels
 The core structure representing a DDM:
 
 ```julia
-DriftDiffusionModel(B, v, a₀, τ, σ)
+DriftDiffusionModel(B, v, a₀, τ)
 ```
 
 * `B`: Boundary separation
 * `v`: Drift rate
 * `a₀`: Initial fraction of the boundary
 * `τ`: Non-decision time
-* `σ`: Noise (fixed to 1.0 for identifiability)
 
 ### `DDMResult`
 
 Result of a single DDM simulation:
 
 ```julia
-DDMResult(rt, choice)
+DDMResult(rt, choice, stimulus)
 ```
 
 * `rt`: Response time
-* `choice`: Decision outcome (1 or -1)
+* `choice`: Decision outcome (1 --> R or -1 --> L)
+* `stimulus`: Whether evidence favored left vs. right trials (1 --> R, -1 --> L)
 
 ---
 
-## ⚙Key Functions
+## Key Functions
 
 ### Simulation
 
@@ -119,26 +118,6 @@ calculate_ll_ratio(ll, ll₀, n)
 
 Computes the per-observation log-likelihood ratio (in bits) between multi-state and single-state models.
 
-### Cross-Validation
-
-```julia
-crossvalidate(data;
-              n_folds=5,
-              n_states=5,
-              n_iter=5,
-              rng=Random.GLOBAL_RNG)
-```
-
-Performs k-fold cross-validation across multiple HMM state counts and random restarts.
-
----
-
-## Utilities
-
-* `randomDDM()` — generate a random DDM
-* Emission model fitting is integrated with `StatsAPI.fit!`
-* Compatible with `DensityInterface` for probabilistic programming use cases
-
 ---
 
 ## References
@@ -153,7 +132,6 @@ Performs k-fold cross-validation across multiple HMM state counts and random res
 * `DriftDiffusionModels.jl` – Main module file
 * `DDM.jl` – Drift Diffusion Model definitions and utilities
 * `HMMDDM.jl` – HMM wrapper with DDM emissions and training
-* `Utilities.jl` – Cross-validation and helper functions
 
 ---
 

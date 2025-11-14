@@ -181,10 +181,10 @@ function logdensityof(B::TB, v::TV, a₀::TA, τ::TT,
     @assert (s == 1 || s == -1) "stimulus s must be ±1"
     @assert (choice == 1 || choice == -1) "choice must be ±1"
 
-    # If you store v as a MAGNITUDE, use:
+    # v is a MAGNITUDE, use:
     v_trial = s * abs(v)
 
-    # Your wfpt is LOWER-boundary density. For upper responses, reflect:
+    # wfpt is LOWER-boundary density. For upper responses, reflect:
     if choice == -1             # lower/Left
         v_eff =  v_trial
         w_eff =  a₀
@@ -225,7 +225,7 @@ function StatsAPI.fit!(model::DriftDiffusionModel, x::Vector{DDMResult}, w::Abst
             ll += w[i] * logdensityof(B_temp, v_temp, a₀_temp, τ_temp, x[i].rt, x[i].choice, x[i].s)
         end
         
-        # Return negative since optimizers typically minimize
+        # Return negative since optimizers minimize
         return -ll
     end
     
